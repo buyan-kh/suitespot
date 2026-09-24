@@ -26,7 +26,8 @@ Do not commit `node_modules`, `.env`, API keys, or tokens.
 
 ## Git
 
-- Work on your own branch. Never commit or push to `main`.
+- Work on your own branch from `main`. One branch per task. Never commit or push to `main`.
+- Name the branch with the team, your name, and the task: `frontend/your_name-search-page`, `backend/your_name-login-api`.
 - Never force-push, rebase a shared branch, or change git config.
 - One feature per pull request. The diff should be your files.
 - Pull `main` before you start.
