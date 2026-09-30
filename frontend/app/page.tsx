@@ -14,7 +14,7 @@ export default function Home() {
       {/* Hero Section */}
       <div className="max-w-3xl text-center space-y-6 mb-16">
         <h1 className="text-4xl sm:text-6xl font-semibold tracking-tight text-stone-900">
-          Find your next stay with <span className="text-stone-600 font-normal underline decoration-stone-300 decoration-1 underline-offset-8">LikeHome</span>
+          Find your next stay with <span className="text-stone-600 font-normal decoration-stone-300 decoration-1">LikeHome</span>
         </h1>
 
         {/* Search Bar Widget */}
