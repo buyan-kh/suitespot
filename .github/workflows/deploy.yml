@@ -1,9 +1,12 @@
-name: CI/CD
+name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -16,13 +19,16 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Backend installs and imports
+      - name: Backend installs, imports and tests
         if: hashFiles('backend/requirements.txt') != ''
         working-directory: backend
         run: |
           pip install -r requirements.txt
           python -c "import main"
+          if [ -d tests ]; then python -m pytest -q; fi
 
       - name: Frontend lints and builds
         if: hashFiles('frontend/package.json') != ''
@@ -31,18 +37,3 @@ jobs:
           npm ci
           npm run lint --if-present
           npm run build
-
-  deploy:
-    needs: check
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    concurrency: deploy
-    steps:
-      - name: Deploy to Oracle Cloud
-        env:
-          SSH_KEY: ${{ secrets.SSH_KEY }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-        run: |
-          echo "$SSH_KEY" > key
-          chmod 600 key
-          ssh -T -i key -o StrictHostKeyChecking=accept-new ubuntu@"$SSH_HOST"
