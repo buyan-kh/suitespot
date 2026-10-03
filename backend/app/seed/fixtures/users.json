@@ -1,0 +1,22 @@
+[
+  {
+    "email": "admin@suitespot.dev",
+    "first_name": "Ada",
+    "last_name": "Admin",
+    "phone": "408-555-0100",
+    "role": "admin"
+  },
+  {
+    "email": "guest1@suitespot.dev",
+    "first_name": "Gary",
+    "last_name": "Guest",
+    "phone": "408-555-0101",
+    "role": "guest"
+  },
+  {
+    "email": "guest2@suitespot.dev",
+    "first_name": "Grace",
+    "last_name": "Guest",
+    "role": "guest"
+  }
+]

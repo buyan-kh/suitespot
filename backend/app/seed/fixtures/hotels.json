@@ -1,0 +1,60 @@
+[
+  {
+    "name": "SuiteSpot Downtown San Jose",
+    "description": "Modern rooms a short walk from the convention center.",
+    "address": "100 S Market St",
+    "city": "San Jose",
+    "state": "CA",
+    "country": "US",
+    "zip_code": "95113",
+    "star_rating": 4,
+    "rooms": [
+      {"room_number": "101", "room_type": "single", "price_per_night": 129.00, "max_guests": 1},
+      {"room_number": "102", "room_type": "double", "price_per_night": 169.00, "max_guests": 2},
+      {"room_number": "201", "room_type": "suite", "price_per_night": 289.00, "max_guests": 4}
+    ]
+  },
+  {
+    "name": "Bayview Inn",
+    "description": "Quiet inn with views of the bay.",
+    "address": "2500 Embarcadero",
+    "city": "San Francisco",
+    "state": "CA",
+    "country": "US",
+    "zip_code": "94111",
+    "star_rating": 3,
+    "rooms": [
+      {"room_number": "1", "room_type": "single", "price_per_night": 149.00, "max_guests": 1},
+      {"room_number": "2", "room_type": "double", "price_per_night": 199.00, "max_guests": 2},
+      {"room_number": "3", "room_type": "double", "price_per_night": 209.00, "max_guests": 3, "is_available": false}
+    ]
+  },
+  {
+    "name": "Ocean Drive Resort",
+    "description": "Beachfront resort with pool and spa.",
+    "address": "1200 Ocean Dr",
+    "city": "Miami",
+    "state": "FL",
+    "country": "US",
+    "zip_code": "33139",
+    "star_rating": 5,
+    "rooms": [
+      {"room_number": "301", "room_type": "double", "price_per_night": 349.00, "max_guests": 2},
+      {"room_number": "302", "room_type": "suite", "price_per_night": 599.00, "max_guests": 4},
+      {"room_number": "PH1", "room_type": "suite", "price_per_night": 1199.00, "max_guests": 6}
+    ]
+  },
+  {
+    "name": "Midtown Budget Stay",
+    "address": "450 W 42nd St",
+    "city": "New York",
+    "state": "NY",
+    "country": "US",
+    "zip_code": "10036",
+    "star_rating": 2,
+    "rooms": [
+      {"room_number": "11", "room_type": "single", "price_per_night": 99.00, "max_guests": 1},
+      {"room_number": "12", "room_type": "double", "price_per_night": 139.00, "max_guests": 2}
+    ]
+  }
+]
