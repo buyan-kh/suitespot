@@ -1,0 +1,8 @@
+[
+  {"slug": "pool", "name": "Pool"},
+  {"slug": "breakfast-included", "name": "Breakfast included"},
+  {"slug": "spa-wellness", "name": "Spa & wellness"},
+  {"slug": "beach-nearby", "name": "Beach nearby"},
+  {"slug": "free-parking", "name": "Free parking"},
+  {"slug": "restaurant", "name": "Restaurant"}
+]
