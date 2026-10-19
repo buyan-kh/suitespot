@@ -17,7 +17,7 @@ function Details() {
   const [checkOut, setCheckOut] = useState(params.get("checkOut") || "");
   const guests = Math.max(1, Number(params.get("adults") || 1) + Number(params.get("children") || 0));
   useEffect(() => {
-    const abort = new AbortController(); setLoading(true); setError("");
+    const abort = new AbortController();
     const query = new URLSearchParams({guests: String(guests)});
     if (checkIn && checkOut) {query.set("checkIn", checkIn); query.set("checkOut", checkOut);}
     fetch(`${API}/hotels/${encodeURIComponent(id)}?${query}`, {signal: abort.signal})
