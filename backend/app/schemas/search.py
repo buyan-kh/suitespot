@@ -28,6 +28,11 @@ class HotelSearchParams(BaseModel):
     room_type: Literal["single", "double", "suite"] | None = Field(
         default=None, alias="roomType"
     )
+    # Optional point for the distance sort; without it distance is measured
+    # from the destination's city centre. Send both or neither.
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    # validate_default so "lat without lng" is still caught.
+    lng: float | None = Field(default=None, ge=-180, le=180, validate_default=True)
 
     # Field validators (not a model validator) so each error's loc names the
     # field, e.g. ["query", "check_out"], and the form can highlight it.
@@ -58,4 +63,15 @@ class HotelSearchParams(BaseModel):
         min_price = info.data.get("min_price")
         if value is not None and min_price is not None and min_price > value:
             raise ValueError("Minimum price can't be more than maximum price.")
+        return value
+
+    @field_validator("lng", mode="after")
+    @classmethod
+    def lat_and_lng_together(
+        cls, value: float | None, info: ValidationInfo
+    ) -> float | None:
+        if "lat" not in info.data:
+            return value  # lat already failed its own range check
+        if (info.data["lat"] is None) != (value is None):
+            raise ValueError("Send lat and lng together.")
         return value

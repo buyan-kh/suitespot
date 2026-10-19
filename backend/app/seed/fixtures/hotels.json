@@ -7,6 +7,8 @@
     "state": "CA",
     "country": "US",
     "zip_code": "95113",
+    "latitude": 37.3352,
+    "longitude": -121.8906,
     "star_rating": 4,
     "rooms": [
       {"room_number": "101", "room_type": "single", "price_per_night": 129.00, "max_guests": 1},
@@ -22,6 +24,8 @@
     "state": "CA",
     "country": "US",
     "zip_code": "94111",
+    "latitude": 37.8052,
+    "longitude": -122.4093,
     "star_rating": 3,
     "rooms": [
       {"room_number": "1", "room_type": "single", "price_per_night": 149.00, "max_guests": 1},
@@ -37,6 +41,8 @@
     "state": "FL",
     "country": "US",
     "zip_code": "33139",
+    "latitude": 25.7802,
+    "longitude": -80.1301,
     "star_rating": 5,
     "rooms": [
       {"room_number": "301", "room_type": "double", "price_per_night": 349.00, "max_guests": 2},
@@ -51,6 +57,8 @@
     "state": "NY",
     "country": "US",
     "zip_code": "10036",
+    "latitude": 40.7587,
+    "longitude": -73.9952,
     "star_rating": 2,
     "rooms": [
       {"room_number": "11", "room_type": "single", "price_per_night": 99.00, "max_guests": 1},
