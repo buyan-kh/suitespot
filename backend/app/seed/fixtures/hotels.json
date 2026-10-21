@@ -8,6 +8,7 @@
     "country": "US",
     "zip_code": "95113",
     "star_rating": 4,
+    "amenities": ["Restaurant", "Free parking"],
     "rooms": [
       {"room_number": "101", "room_type": "single", "price_per_night": 129.00, "max_guests": 1},
       {"room_number": "102", "room_type": "double", "price_per_night": 169.00, "max_guests": 2},
@@ -23,6 +24,7 @@
     "country": "US",
     "zip_code": "94111",
     "star_rating": 3,
+    "amenities": ["Breakfast included", "Free parking"],
     "rooms": [
       {"room_number": "1", "room_type": "single", "price_per_night": 149.00, "max_guests": 1},
       {"room_number": "2", "room_type": "double", "price_per_night": 199.00, "max_guests": 2},
@@ -38,6 +40,7 @@
     "country": "US",
     "zip_code": "33139",
     "star_rating": 5,
+    "amenities": ["Pool", "Beach nearby", "Spa & wellness", "Restaurant"],
     "rooms": [
       {"room_number": "301", "room_type": "double", "price_per_night": 349.00, "max_guests": 2},
       {"room_number": "302", "room_type": "suite", "price_per_night": 599.00, "max_guests": 4},
@@ -52,6 +55,7 @@
     "country": "US",
     "zip_code": "10036",
     "star_rating": 2,
+    "amenities": ["Breakfast included"],
     "rooms": [
       {"room_number": "11", "room_type": "single", "price_per_night": 99.00, "max_guests": 1},
       {"room_number": "12", "room_type": "double", "price_per_night": 139.00, "max_guests": 2}
