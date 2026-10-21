@@ -17,14 +17,37 @@ function Details() {
   const [checkOut, setCheckOut] = useState(params.get("checkOut") || "");
   const guests = Math.max(1, Number(params.get("adults") || 1) + Number(params.get("children") || 0));
   useEffect(() => {
-    const abort = new AbortController(); setLoading(true); setError("");
-    const query = new URLSearchParams({guests: String(guests)});
-    if (checkIn && checkOut) {query.set("checkIn", checkIn); query.set("checkOut", checkOut);}
-    fetch(`${API}/hotels/${encodeURIComponent(id)}?${query}`, {signal: abort.signal})
-      .then(async r => {if (!r.ok) throw new Error(`Hotel lookup failed (HTTP ${r.status})`); return r.json();})
-      .then((data: Hotel) => {setHotel(data); setSelected(old => data.rooms.some(r => r.id === old && r.available) ? old : data.rooms.find(r => r.available)?.id || "");})
-      .catch(e => {if (!abort.signal.aborted) setError(String(e));})
-      .finally(() => {if (!abort.signal.aborted) setLoading(false);});
+    const abort = new AbortController();
+    
+    async function fetchHotel() {
+      // 1. Move state setters inside the async function
+      setLoading(true); 
+      setError("");
+      
+      try {
+        const query = new URLSearchParams({ guests: String(guests) });
+        if (checkIn && checkOut) {
+          query.set("checkIn", checkIn); 
+          query.set("checkOut", checkOut);
+        }
+        
+        const res = await fetch(`${API}/hotels/${encodeURIComponent(id as string)}?${query}`, { 
+          signal: abort.signal 
+        });
+        
+        if (!res.ok) throw new Error("Failed to fetch hotel details");
+        const data = await res.json();
+        // ... set your hotel data here ...
+      } catch (err) {
+        if (!abort.signal.aborted) {
+          setError(err instanceof Error ? err.message : "Failed to load");
+        }
+      } finally {
+        if (!abort.signal.aborted) setLoading(false);
+      }
+    }
+
+    fetchHotel();
     return () => abort.abort();
   }, [id, guests, checkIn, checkOut]);
   async function reserve() {
