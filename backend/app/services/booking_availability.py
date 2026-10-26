@@ -4,6 +4,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.hotel import Hotel
 from app.models.reservation import Reservation
 from app.models.room import Room
 from app.services.availability import FREE_STATUSES, is_room_available
@@ -106,10 +107,12 @@ def place_hold(
     room = db.execute(
         select(Room).where(Room.id == room_id).with_for_update()
     ).scalar_one_or_none()
-
-    if room is None:
+    
+    hotel = db.get(Hotel, room.hotel_id) if room is not None else None
+    if room is None or hotel is None or not hotel.is_active:
+        db.rollback()  # release the room lock
         raise RoomNotFound(f"Room {room_id} does not exist.")
-
+        
     if num_guests > room.max_guests:
         raise InvalidStay(
             "num_guests",
