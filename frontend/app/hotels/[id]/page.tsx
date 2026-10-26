@@ -18,26 +18,29 @@ function Details() {
   const guests = Math.max(1, Number(params.get("adults") || 1) + Number(params.get("children") || 0));
   useEffect(() => {
     const abort = new AbortController();
-    
+
     async function fetchHotel() {
-      // 1. Move state setters inside the async function
-      setLoading(true); 
+      // State updates stay inside the async function so the effect body
+      // does not call setState synchronously (Sprint 3 ESLint fix).
+      setLoading(true);
       setError("");
-      
+
       try {
-        const query = new URLSearchParams({ guests: String(guests) });
+        const query = new URLSearchParams({guests: String(guests)});
         if (checkIn && checkOut) {
-          query.set("checkIn", checkIn); 
+          query.set("checkIn", checkIn);
           query.set("checkOut", checkOut);
         }
-        
-        const res = await fetch(`${API}/hotels/${encodeURIComponent(id as string)}?${query}`, { 
-          signal: abort.signal 
+
+        const res = await fetch(`${API}/hotels/${encodeURIComponent(id)}?${query}`, {
+          signal: abort.signal,
         });
-        
-        if (!res.ok) throw new Error("Failed to fetch hotel details");
-        const data = await res.json();
-        // ... set your hotel data here ...
+
+        if (!res.ok) throw new Error(`Hotel lookup failed (HTTP ${res.status})`);
+        const data = (await res.json()) as Hotel;
+        if (abort.signal.aborted) return;
+        setHotel(data);
+        setSelected(old => data.rooms.some(r => r.id === old && r.available) ? old : data.rooms.find(r => r.available)?.id || "");
       } catch (err) {
         if (!abort.signal.aborted) {
           setError(err instanceof Error ? err.message : "Failed to load");
