@@ -7,6 +7,8 @@
     "state": "CA",
     "country": "US",
     "zip_code": "95113",
+    "latitude": 37.3352,
+    "longitude": -121.8906,
     "star_rating": 4,
     "amenities": ["Restaurant", "Free parking"],
     "rooms": [
@@ -23,6 +25,8 @@
     "state": "CA",
     "country": "US",
     "zip_code": "94111",
+    "latitude": 37.8052,
+    "longitude": -122.4093,
     "star_rating": 3,
     "amenities": ["Breakfast included", "Free parking"],
     "rooms": [
@@ -39,6 +43,8 @@
     "state": "FL",
     "country": "US",
     "zip_code": "33139",
+    "latitude": 25.7802,
+    "longitude": -80.1301,
     "star_rating": 5,
     "amenities": ["Pool", "Beach nearby", "Spa & wellness", "Restaurant"],
     "rooms": [
@@ -54,6 +60,8 @@
     "state": "NY",
     "country": "US",
     "zip_code": "10036",
+    "latitude": 40.7587,
+    "longitude": -73.9952,
     "star_rating": 2,
     "amenities": ["Breakfast included"],
     "rooms": [

@@ -51,6 +51,11 @@ def load_fixtures(db: Session, fixtures_dir: Path = FIXTURES_DIR) -> dict[str, i
             db.add(hotel)
             db.flush()
             created["hotels"] += 1
+        else:
+            # Hotels seeded before coordinates existed get them filled in.
+            for field in ("latitude", "longitude"):
+                if getattr(hotel, field) is None and data.get(field) is not None:
+                    setattr(hotel, field, data[field])
 
         for room_data in rooms:
             exists = (
