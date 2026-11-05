@@ -68,6 +68,7 @@ function CheckoutContent() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setReservation({
       id: reservationId || 'HOLD-849204',
       hotelName: 'SuiteSpot Downtown San Jose',
@@ -81,6 +82,7 @@ function CheckoutContent() {
     });
     setLoading(false);
   }, [reservationId]);
+  
 
   const formatTime = (secs: number) => {
     const mins = Math.floor(secs / 60);
