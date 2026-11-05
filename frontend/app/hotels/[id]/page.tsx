@@ -47,31 +47,33 @@ function Details() {
 
   useEffect(() => {
     const abort = new AbortController();
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoading(true);
-    setError("");
 
-    const query = new URLSearchParams({ guests: String(guests) });
-    if (checkIn && checkOut) {
-      query.set("checkIn", checkIn);
-      query.set("checkOut", checkOut);
+    async function fetchData() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const query = new URLSearchParams({ guests: String(guests) });
+        if (checkIn && checkOut) {
+          query.set("checkIn", checkIn);
+          query.set("checkOut", checkOut);
+        }
+        const res = await fetch(`${API}/hotels/${encodeURIComponent(id)}?${query}`, {
+          signal: abort.signal,
+        });
+        if (!res.ok) throw new Error("Failed to load hotel details");
+        const data = await res.json();
+        setHotel(data);
+      } catch (err: any) {
+        if (err.name !== "AbortError") {
+          setError(err.message || "Failed to load hotel details");
+        }
+      } finally {
+        setLoading(false);
+      }
     }
 
-    fetch(`${API}/hotels/${encodeURIComponent(id)}?${query}`, { signal: abort.signal })
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to load hotel details");
-        return res.json();
-      })
-      .then((data) => {
-        setHotel(data);
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (err.name !== "AbortError") {
-          setError(err.message);
-          setLoading(false);
-        }
-      });
+    fetchData();
 
     return () => abort.abort();
   }, [id, guests, checkIn, checkOut]);
