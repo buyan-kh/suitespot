@@ -2,7 +2,7 @@ import argparse
 
 from app.config import settings
 from app.database import SessionLocal
-from app.seed.loader import load_fixtures, load_images, reset_tables
+from app.seed.loader import load_amenities, load_fixtures, load_images, reset_tables
 
 
 def main() -> None:
@@ -26,6 +26,11 @@ def main() -> None:
         print(
             f"Seeded {created['users']} users, {created['hotels']} hotels, "
             f"{created['rooms']} rooms."
+        )
+        amenities = load_amenities(db)
+        print(
+            f"Seeded {amenities['amenities']} amenities, "
+            f"{amenities['hotel_amenities']} hotel amenities."
         )
         print(f"Seeded {load_images(db)} images.")
     finally:

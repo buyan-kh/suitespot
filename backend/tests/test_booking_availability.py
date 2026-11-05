@@ -168,3 +168,32 @@ def test_failed_hold_creates_nothing(db_session, user, room):
 def test_check_in_today_is_allowed(db_session, user, room):
     h = hold(db_session, user, room, check_in=NOW.date(), check_out=NOW.date() + timedelta(days=1))
     assert h.status == "pending"
+
+def test_room_in_a_deactivated_hotel_is_refused(db_session, user, room):
+    db_session.get(Hotel, room.hotel_id).is_active = False
+    db_session.commit()
+    with pytest.raises(RoomNotFound):
+        hold(db_session, user, room)
+    assert db_session.query(Reservation).count() == 0
+
+
+def test_room_is_bookable_again_when_the_hotel_is_reactivated(db_session, user, room):
+    hotel = db_session.get(Hotel, room.hotel_id)
+    hotel.is_active = False
+    db_session.commit()
+    with pytest.raises(RoomNotFound):
+        hold(db_session, user, room)
+    hotel.is_active = True
+    db_session.commit()
+    assert hold(db_session, user, room).status == "pending"
+
+
+def test_deactivating_one_hotel_does_not_block_another(db_session, user, room):
+    db_session.get(Hotel, room.hotel_id).is_active = False
+    other_hotel = Hotel(name="Open Inn", address="2 Main", city="San Jose", country="US")
+    db_session.add(other_hotel)
+    db_session.flush()
+    other_room = Room(hotel_id=other_hotel.id, room_number="201", price_per_night=90, max_guests=2)
+    db_session.add(other_room)
+    db_session.commit()
+    assert hold(db_session, user, other_room).status == "pending"

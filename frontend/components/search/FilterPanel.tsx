@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -57,6 +57,8 @@ function FilterForm({ className }: FilterPanelProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isFirstRender = useRef(true);
 
   const [filters, setFilters] = useState<Filters>({
     minPrice: searchParams.get('minPrice') ?? '',
@@ -110,8 +112,33 @@ function FilterForm({ className }: FilterPanelProps) {
     router.push(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }
 
+  // Task 1.7.1: Debounced auto-refetch when user changes filters (350ms delay)
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+
+    const found = validate(filters);
+    setErrors(found);
+    if (Object.keys(found).length > 0) return;
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    debounceTimerRef.current = setTimeout(() => {
+      pushParams(filters);
+    }, 350);
+
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
+  }, [filters]);
+
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     const found = validate(filters);
     setErrors(found);
     if (Object.keys(found).length > 0) return;
@@ -119,6 +146,7 @@ function FilterForm({ className }: FilterPanelProps) {
   }
 
   function handleClear() {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     const empty: Filters = { minPrice: '', maxPrice: '', minStars: '', roomType: '', amenities: '' };
     setFilters(empty);
     setErrors({});

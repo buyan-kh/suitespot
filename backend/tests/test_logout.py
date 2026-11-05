@@ -58,3 +58,31 @@ def test_refresh_token_is_rejected_after_logout(client, user):
     client.post("/auth/logout", headers={"Authorization": f"Bearer {tokens['access_token']}"})
     response = client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
     assert response.status_code == 401
+
+def _register_and_login(client, email="flow@x.com"):
+    client.post("/register", json={"email": email, "password": "Passw0rdOK"})
+    return client.post("/login", json={"email": email, "password": "Passw0rdOK"}).json()
+
+
+def test_logout_after_a_real_login(client):
+    tokens = _register_and_login(client)
+    response = client.post(
+        "/auth/logout", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"detail": "Logged out."}
+    
+def test_user_can_log_in_again_after_logging_out(client):
+    first = _register_and_login(client)
+    client.post("/auth/logout", headers={"Authorization": f"Bearer {first['access_token']}"})
+    second = client.post("/login", json={"email": "flow@x.com", "password": "Passw0rdOK"})
+    assert second.status_code == 200
+    headers = {"Authorization": f"Bearer {second.json()['access_token']}"}
+    # 404 (not 401) means the new token was accepted as a logged-in user.
+    assert client.post("/reservations/none/cancel", headers=headers).status_code == 404
+
+
+def test_logout_is_documented_in_the_api_docs(client):
+    operation = client.get("/openapi.json").json()["paths"]["/auth/logout"]["post"]
+    assert operation["summary"] == "Log out"
+    assert "delete the access and refresh tokens" in operation["description"]

@@ -15,14 +15,15 @@ from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import Hotel, Reservation, Room
+from app.services.distance import Origin, sort_by_distance
 
 # Reservation statuses that do NOT hold a room.
 FREE_STATUSES = ("cancelled",)
 
 # 1.5.1 Sort options for search results. These match the values the frontend
 # SortControl sends. "recommended" is the default and currently orders by name.
-# Distance isn't supported yet: hotels have no latitude/longitude columns.
-SortOption = Literal["recommended", "price_asc", "price_desc", "rating"]
+# "distance" (1.5.3) is ordered in Python by app/services/distance.py.
+SortOption = Literal["recommended", "price_asc", "price_desc", "rating", "distance"]
 
 
 def _ordering(sort: str) -> list:
@@ -33,6 +34,7 @@ def _ordering(sort: str) -> list:
         "price_asc": [from_price.asc(), Hotel.name],
         "price_desc": [from_price.desc(), Hotel.name],
         "rating": [Hotel.star_rating.desc(), from_price.asc(), Hotel.name],
+        "distance": [Hotel.name],  # re-sorted by distance after the query
     }
     if sort not in orderings:
         raise ValueError(f"sort must be one of {get_args(SortOption)}, got {sort!r}")
@@ -74,8 +76,14 @@ def find_available_hotels(
     max_price: float | None = None,
     min_stars: int | None = None,
     room_type: str | None = None,
+    origin: Origin | None = None,
 ) -> list[dict]:
-    """Hotels with at least one free room that fits the party for the dates."""
+    """Hotels with at least one free room that fits the party for the dates.
+
+    sort="distance" needs origin, the point to measure from.
+    """
+    if sort == "distance" and origin is None:
+        raise ValueError("sort='distance' needs an origin")
     destination = destination.strip()
     stmt = (
         select(
@@ -85,6 +93,8 @@ def find_available_hotels(
             Hotel.state,
             Hotel.star_rating,
             Hotel.image_url,
+            Hotel.latitude,
+            Hotel.longitude,
             func.count(Room.id).label("rooms_available"),
             func.min(Room.price_per_night).label("from_price"),
         )
@@ -102,8 +112,6 @@ def find_available_hotels(
         )
         .group_by(Hotel.id)
         .order_by(*_ordering(sort))
-        .limit(limit)
-        .offset(offset)
     )
     if min_price is not None:
         stmt = stmt.where(Room.price_per_night >= min_price)
@@ -113,5 +121,10 @@ def find_available_hotels(
         stmt = stmt.where(Hotel.star_rating >= min_stars)
     if room_type is not None:
         stmt = stmt.where(Room.room_type == room_type)
-    rows = db.execute(stmt).mappings().all()
-    return [{**row, "from_price": float(row["from_price"])} for row in rows]
+    if sort != "distance":
+        stmt = stmt.limit(limit).offset(offset)
+    rows = [{**row, "from_price": float(row["from_price"])} for row in db.execute(stmt).mappings()]
+    if sort != "distance":
+        return [{**row, "distance_km": None} for row in rows]
+    # Distance needs trig, so sort every match in Python, then page.
+    return sort_by_distance(rows, origin)[offset:offset + limit]

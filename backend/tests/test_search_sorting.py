@@ -77,9 +77,8 @@ def test_response_reports_the_sort_used(client, hotels):
     assert client.get("/search", params=PARAMS).json()["sort"] == "recommended"
 
 
-@pytest.mark.parametrize("bad", ["distance", "name", "cheapest", "", "PRICE_ASC"])
+@pytest.mark.parametrize("bad", ["name", "cheapest", "", "PRICE_ASC"])
 def test_unknown_sort_is_rejected_and_names_the_field(client, hotels, bad):
-    # "distance" is deliberately unsupported: hotels have no latitude/longitude yet.
     response = client.get("/search", params={**PARAMS, "sort": bad})
     assert response.status_code == 422
     assert response.json()["detail"][0]["loc"] == ["query", "sort"]
@@ -139,5 +138,5 @@ def test_service_rejects_unknown_sort(db_session):
     with pytest.raises(ValueError):
         find_available_hotels(
             db_session, destination="x", check_in=TODAY, check_out=TODAY + timedelta(days=1),
-            guests=1, sort="distance",
+            guests=1, sort="name",
         )

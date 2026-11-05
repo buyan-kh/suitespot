@@ -4,6 +4,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from app.amenities.models import Amenity, HotelAmenity
 from app.images.models import HotelImage
 from app.images.resize import ORIGINALS_DIR, SIZED_DIR, build_sizes, slugify
 from app.models import Hotel, Payment, Reservation, Room, User
@@ -23,7 +24,7 @@ def _read_fixture(name: str, fixtures_dir: Path) -> list[dict]:
 
 def reset_tables(db: Session) -> None:
     """Delete all rows, children first so foreign keys stay valid."""
-    for model in (HotelImage, Payment, Reservation, Room, Hotel, User):
+    for model in (HotelAmenity, Amenity, HotelImage, Payment, Reservation, Room, Hotel, User):
         db.query(model).delete()
     db.commit()
 
@@ -43,12 +44,18 @@ def load_fixtures(db: Session, fixtures_dir: Path = FIXTURES_DIR) -> dict[str, i
 
     for data in _read_fixture("hotels.json", fixtures_dir):
         rooms = data.pop("rooms", [])
+        data.pop("amenities", None)  # linked by load_amenities
         hotel = db.query(Hotel).filter_by(name=data["name"], city=data["city"]).first()
         if hotel is None:
             hotel = Hotel(**data)
             db.add(hotel)
             db.flush()
             created["hotels"] += 1
+        else:
+            # Hotels seeded before coordinates existed get them filled in.
+            for field in ("latitude", "longitude"):
+                if getattr(hotel, field) is None and data.get(field) is not None:
+                    setattr(hotel, field, data[field])
 
         for room_data in rooms:
             exists = (
@@ -60,6 +67,43 @@ def load_fixtures(db: Session, fixtures_dir: Path = FIXTURES_DIR) -> dict[str, i
                 continue
             db.add(Room(hotel_id=hotel.id, **room_data))
             created["rooms"] += 1
+
+    db.commit()
+    return created
+
+
+def load_amenities(db: Session, fixtures_dir: Path = FIXTURES_DIR) -> dict[str, int]:
+    """Insert amenities and link hotels to them (1.6.1). Safe to run repeatedly.
+
+    Run after load_fixtures. Each hotel in hotels.json lists its amenities by
+    name; a name missing from amenities.json is skipped with a warning.
+    Returns the number of amenities and hotel links created.
+    """
+    created = {"amenities": 0, "hotel_amenities": 0}
+
+    by_name: dict[str, Amenity] = {}
+    for data in _read_fixture("amenities.json", fixtures_dir):
+        amenity = db.query(Amenity).filter_by(slug=data["slug"]).first()
+        if amenity is None:
+            amenity = Amenity(**data)
+            db.add(amenity)
+            db.flush()
+            created["amenities"] += 1
+        by_name[amenity.name] = amenity
+
+    for data in _read_fixture("hotels.json", fixtures_dir):
+        hotel = db.query(Hotel).filter_by(name=data["name"], city=data["city"]).first()
+        if hotel is None:
+            continue
+        for name in data.get("amenities", []):
+            amenity = by_name.get(name)
+            if amenity is None:
+                logger.warning("hotels.json: %r lists unknown amenity %r", hotel.name, name)
+                continue
+            if db.get(HotelAmenity, (hotel.id, amenity.id)) is not None:
+                continue
+            db.add(HotelAmenity(hotel_id=hotel.id, amenity_id=amenity.id))
+            created["hotel_amenities"] += 1
 
     db.commit()
     return created
