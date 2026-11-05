@@ -178,3 +178,11 @@ def test_verify_displayed_total_unit(hold):
     with pytest.raises(TotalMismatch) as error:
         verify_displayed_total(hold, 299)
     assert error.value.expected == Decimal("300.00") and error.value.displayed == Decimal("299.00")
+
+def test_the_hold_uses_the_shared_pricing_function(db_session, user, room, monkeypatch):
+    """Fees added to stay_total() must flow into the hold, the check and the charge."""
+    from app.services import booking_availability
+
+    monkeypatch.setattr(booking_availability, "stay_total", lambda rate, nights: Decimal("123.45"))
+    reservation = place_hold(db_session, user_id=user.id, room_id=room.id, check_in=IN, check_out=OUT)
+    assert money(reservation.total_price) == Decimal("123.45")
