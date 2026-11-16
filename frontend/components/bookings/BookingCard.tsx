@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 import { BedDouble, CalendarDays, ImageOff, Users } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import StatusBadge, { type BookingStatus } from "@/components/bookings/StatusBadge";
 
 // Task 4.2.1 - one booking on the My Bookings page.
+// Task 4.3.2 - `highlighted` outlines the booking that was just changed or cancelled.
 // Data: a card from GET /me/reservations (4.1.1).
 
 export type BookingCardData = {
@@ -39,15 +41,23 @@ const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 export default function BookingCard({
   booking,
   onCancel,
+  highlighted = false,
 }: {
   booking: BookingCardData;
   onCancel?: (booking: BookingCardData) => void;
+  highlighted?: boolean;
 }) {
   const { hotel, room, status } = booking;
   const photo = hotel.image?.sizes?.thumb;
 
   return (
-    <article className="flex flex-col overflow-hidden rounded-card border border-line bg-surface shadow-sm sm:flex-row">
+    <article
+      id={`booking-${booking.id}`}
+      className={cn(
+        "flex scroll-mt-6 flex-col overflow-hidden rounded-card border bg-surface shadow-sm transition-shadow sm:flex-row",
+        highlighted ? "border-accent ring-2 ring-accent/30" : "border-line"
+      )}
+    >
       <div className="h-40 w-full shrink-0 bg-surface-muted sm:h-auto sm:w-48">
         {photo ? (
           // eslint-disable-next-line @next/next/no-img-element
