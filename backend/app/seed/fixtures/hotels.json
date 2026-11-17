@@ -12,9 +12,9 @@
     "star_rating": 4,
     "amenities": ["Restaurant", "Free parking"],
     "rooms": [
-      {"room_number": "101", "room_type": "single", "price_per_night": 129.00, "max_guests": 1},
+      {"room_number": "101", "room_type": "single", "price_per_night": 129.00, "member_price_per_night": 115.00, "max_guests": 1},
       {"room_number": "102", "room_type": "double", "price_per_night": 169.00, "max_guests": 2},
-      {"room_number": "201", "room_type": "suite", "price_per_night": 289.00, "max_guests": 4}
+      {"room_number": "201", "room_type": "suite", "price_per_night": 289.00, "member_price_per_night": 259.00, "max_guests": 4}
     ]
   },
   {
@@ -31,7 +31,7 @@
     "amenities": ["Breakfast included", "Free parking"],
     "rooms": [
       {"room_number": "1", "room_type": "single", "price_per_night": 149.00, "max_guests": 1},
-      {"room_number": "2", "room_type": "double", "price_per_night": 199.00, "max_guests": 2},
+      {"room_number": "2", "room_type": "double", "price_per_night": 199.00, "member_price_per_night": 179.00, "max_guests": 2},
       {"room_number": "3", "room_type": "double", "price_per_night": 209.00, "max_guests": 3, "is_available": false}
     ]
   },
@@ -49,8 +49,8 @@
     "amenities": ["Pool", "Beach nearby", "Spa & wellness", "Restaurant"],
     "rooms": [
       {"room_number": "301", "room_type": "double", "price_per_night": 349.00, "max_guests": 2},
-      {"room_number": "302", "room_type": "suite", "price_per_night": 599.00, "max_guests": 4},
-      {"room_number": "PH1", "room_type": "suite", "price_per_night": 1199.00, "max_guests": 6}
+      {"room_number": "302", "room_type": "suite", "price_per_night": 599.00, "member_price_per_night": 529.00, "max_guests": 4},
+      {"room_number": "PH1", "room_type": "suite", "price_per_night": 1199.00, "member_price_per_night": 1049.00, "max_guests": 6}
     ]
   },
   {
@@ -66,7 +66,7 @@
     "amenities": ["Breakfast included"],
     "rooms": [
       {"room_number": "11", "room_type": "single", "price_per_night": 99.00, "max_guests": 1},
-      {"room_number": "12", "room_type": "double", "price_per_night": 139.00, "max_guests": 2}
+      {"room_number": "12", "room_type": "double", "price_per_night": 139.00, "member_price_per_night": 125.00, "max_guests": 2}
     ]
   }
 ]

@@ -11,6 +11,7 @@ from app.images.resize import SIZED_DIR
 from app.requote import router as requote
 from app.routers import auth_tokens, cancel, health, hotels, login, logout, register, reservations, search, verify_total
 from app.my_reservations import router as my_reservations
+from app.member_rates import router as member_rates
 from app.routers import auth_tokens, cancel, health, hotels, login, logout, modify, register, reservations, search, verify_total
 
 app = FastAPI(title="SuiteSpot API", version="0.1.0")
@@ -52,6 +53,7 @@ app.include_router(images.router)
 app.include_router(amenities.router)
 app.include_router(requote.router)
 app.include_router(my_reservations.router)
+app.include_router(member_rates.router)
 
 # Resized hotel photos (1.3.1), built by `python -m app.images` or the seed.
 app.mount("/media", StaticFiles(directory=SIZED_DIR, check_dir=False), name="media")
