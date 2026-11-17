@@ -3,6 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from app.error_handlers import register_error_handlers
 
 from app.amenities import router as amenities
 from app.images import router as images
@@ -11,6 +12,7 @@ from app.my_reservations import router as my_reservations
 from app.routers import auth_tokens, cancel, health, hotels, login, logout, modify, register, reservations, search, verify_total
 
 app = FastAPI(title="SuiteSpot API", version="0.1.0")
+register_error_handlers(app)
 
 # Comma-separated. Trailing "/" is stripped because browsers send Origin without one.
 CORS_ORIGINS = [
