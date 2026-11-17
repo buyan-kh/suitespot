@@ -223,6 +223,26 @@ def test_a_pending_hold_by_someone_else_blocks(db_session, user, other, room, bo
         quote(db_session, user, booking, check_out=day(15))
 
 
+def expire(db, reservation):
+    """Age an unpaid hold past HOLD_MINUTES."""
+    reservation.created_at = datetime.now(timezone.utc) - timedelta(minutes=16)
+    db.commit()
+
+
+def test_someone_elses_expired_hold_does_not_block(db_session, user, other, room, booking):
+    # place_hold and modify (2.3.1) release it first, so the quote must not count it.
+    expire(db_session, reserve(db_session, other, room, check_in=day(13), nights=2, status="pending"))
+    assert quote(db_session, user, booking, check_out=day(15)).proposed.nights == 5
+
+
+def test_a_fresh_hold_by_someone_else_still_blocks(db_session, user, other, room, booking):
+    hold = reserve(db_session, other, room, check_in=day(13), nights=2, status="pending")
+    hold.created_at = datetime.now(timezone.utc) - timedelta(minutes=14)
+    db_session.commit()
+    with pytest.raises(RoomUnavailable):
+        quote(db_session, user, booking, check_out=day(15))
+
+
 def test_my_own_other_booking_still_blocks(db_session, user, room, booking):
     reserve(db_session, user, room, check_in=day(14), nights=2)
     with pytest.raises(RoomUnavailable):
@@ -321,7 +341,7 @@ def test_endpoint_returns_the_quote(client, user, booking):
 
 
 def test_endpoint_requires_login(client, booking):
-    assert post(client, None, booking.id, {}).status_code == 401
+    assert post(client, None, booking.id, {"num_guests": 2}).status_code == 401
 
 
 def test_someone_elses_reservation_is_404(client, other, booking):
@@ -333,7 +353,7 @@ def test_someone_elses_reservation_is_404(client, other, booking):
 
 
 def test_unknown_reservation_is_404(client, user):
-    assert post(client, user, "nope", {}).status_code == 404
+    assert post(client, user, "nope", {"num_guests": 2}).status_code == 404
 
 
 @pytest.mark.parametrize("body,code,kind,field", [
@@ -356,9 +376,28 @@ def test_endpoint_conflicts(client, db_session, user, other, room, booking):
 
 def test_endpoint_rejects_a_closed_reservation(client, db_session, user, room):
     r = reserve(db_session, user, room, status="cancelled")
-    response = post(client, user, r.id, {})
+    response = post(client, user, r.id, {"num_guests": 2})
     assert response.status_code == 409
     assert response.json()["detail"][0]["type"] == "not_changeable"
+
+
+def test_my_expired_hold_cannot_be_changed(client, db_session, user, room):
+    # Modify cancels it before looking, so the quote gives the same answer.
+    hold = reserve(db_session, user, room, status="pending")
+    expire(db_session, hold)
+    response = post(client, user, hold.id, {"num_guests": 2})
+    assert response.status_code == 409
+    assert response.json()["detail"][0]["msg"] == "A cancelled reservation can't be changed."
+    db_session.refresh(hold)
+    assert hold.status == "pending"  # still read-only: nothing was released
+
+
+def test_an_empty_body_is_422_like_modify(client, user, booking):
+    assert post(client, user, booking.id, {}).status_code == 422
+
+
+def test_unknown_fields_are_422_like_modify(client, user, booking):
+    assert post(client, user, booking.id, {"num_guests": 2, "total_price": 1}).status_code == 422
 
 
 @pytest.mark.parametrize("body", [{"num_guests": 0}, {"num_guests": 11}, {"check_in": "not-a-date"}])

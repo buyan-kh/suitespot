@@ -9,14 +9,15 @@ _quote() next to `proposed_total`.
 """
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import exists, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Hotel, Payment, Reservation, Room
 from app.services.availability import FREE_STATUSES
+from app.services.booking_availability import HOLD_MINUTES, STATUS_PENDING
 from app.services.pricing import money, stay_total
 
 CHANGEABLE_STATUSES = ("pending", "confirmed")
@@ -76,22 +77,34 @@ class Quote:
     changed: bool  # False when the request matches the booking exactly
 
 
+def _hold_expired(reservation: Reservation, now: datetime) -> bool:
+    """An unpaid hold past HOLD_MINUTES. place_hold and modify cancel these before
+    checking (release_expired_holds); the quote is read-only, so it just skips them."""
+    if reservation.status != STATUS_PENDING or reservation.created_at is None:
+        return False
+    created = reservation.created_at
+    if created.tzinfo is None:  # SQLite returns naive datetimes; they are UTC
+        created = created.replace(tzinfo=timezone.utc)
+    return now - created >= timedelta(minutes=HOLD_MINUTES)
+
+
 def _overlaps_another_stay(
-    db: Session, *, room_id: str, check_in: date, check_out: date, skip_id: str
+    db: Session, *, room_id: str, check_in: date, check_out: date, skip_id: str,
+    now: datetime,
 ) -> bool:
     """Same half-open [check_in, check_out) rule as availability.is_room_available,
-    but the reservation being changed does not count against itself."""
-    return db.scalar(
-        select(
-            exists().where(
-                Reservation.room_id == room_id,
-                Reservation.id != skip_id,
-                Reservation.status.not_in(FREE_STATUSES),
-                Reservation.check_in_date < check_out,
-                Reservation.check_out_date > check_in,
-            )
+    but the reservation being changed does not count against itself, and expired
+    holds don't count (filtered in Python: tz-aware comparison in SQLite is unreliable)."""
+    others = db.scalars(
+        select(Reservation).where(
+            Reservation.room_id == room_id,
+            Reservation.id != skip_id,
+            Reservation.status.not_in(FREE_STATUSES),
+            Reservation.check_in_date < check_out,
+            Reservation.check_out_date > check_in,
         )
-    )
+    ).all()
+    return any(not _hold_expired(r, now) for r in others)
 
 
 def _amount_paid(db: Session, reservation_id: str) -> Decimal:
@@ -114,9 +127,11 @@ def quote_change(
     check_out: date | None = None,
     num_guests: int | None = None,
     today: date | None = None,
+    now: datetime | None = None,
 ) -> Quote:
     """Quote a change. Any field left as None keeps the booking's current value."""
-    today = today or datetime.now(timezone.utc).date()
+    now = now or datetime.now(timezone.utc)
+    today = today or now.date()
 
     # Someone else's reservation gets the same answer as a missing one.
     reservation = db.execute(
@@ -127,9 +142,11 @@ def quote_change(
     if reservation is None:
         raise ReservationNotFound("reservation_id", "Reservation not found.")
 
-    if reservation.status not in CHANGEABLE_STATUSES:
+    # An expired unpaid hold is cancelled by modify before it looks; say the same.
+    status_now = "cancelled" if _hold_expired(reservation, now) else reservation.status
+    if status_now not in CHANGEABLE_STATUSES:
         raise NotChangeable(
-            "reservation_id", f"A {reservation.status} reservation can't be changed."
+            "reservation_id", f"A {status_now} reservation can't be changed."
         )
     if reservation.check_in_date < today:
         raise NotChangeable(
@@ -158,7 +175,8 @@ def quote_change(
         )
 
     if _overlaps_another_stay(
-        db, room_id=room.id, check_in=new_in, check_out=new_out, skip_id=reservation.id
+        db, room_id=room.id, check_in=new_in, check_out=new_out, skip_id=reservation.id,
+        now=now,
     ):
         raise RoomUnavailable(
             "room_id", "This room is not available for those dates."
