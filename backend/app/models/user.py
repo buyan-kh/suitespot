@@ -28,3 +28,4 @@ class User(Base):
     )
 
     reservations = relationship("Reservation", back_populates="user")
+    points_ledger = relationship("PointsLedger", back_populates="user")
