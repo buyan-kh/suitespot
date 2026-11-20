@@ -22,6 +22,8 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.user import User
+from app.services.stay_overlap import find_overlapping_stay
 from app.models.hotel import Hotel
 from app.models.reservation import Reservation
 from app.models.room import Room
@@ -88,6 +90,11 @@ def modify_reservation(
     # and an expired hold of ours is correctly refused below as cancelled.
     release_expired_holds(db, now=now)
 
+    # Lock the guest first, the same order as place_hold (guest, then the rows below),
+    # so a modify and a booking by the same guest, or two modifies, can't both pass the
+    # overlap check at the same moment. Different guests never wait on each other.
+    db.execute(select(User.id).where(User.id == user_id).with_for_update())
+
     # FOR UPDATE locks the row on PostgreSQL, so a modify, a cancel (2.2.1) and a
     # payment confirmation (3.1.4) on the same reservation happen one at a time.
     reservation = db.execute(
@@ -140,6 +147,16 @@ def modify_reservation(
         db.rollback()
         raise InvalidStay("num_guests", f"This room sleeps at most {room.max_guests} guests.")
 
+    # US2.4: a guest may not hold stays at two different hotels on the same nights.
+    # This reservation itself is excluded, so it can move onto its own old nights.
+    conflict = find_overlapping_stay(
+        db, user_id=user_id, hotel_id=room.hotel_id, check_in=new_in, check_out=new_out,
+        exclude_reservation_id=reservation.id,
+    )
+    if conflict is not None:
+        db.rollback()
+        raise OverlappingStay(conflict)
+    
     original_status = reservation.status
     reservation.status = STATUS_CANCELLED  # so the rule doesn't count us against ourselves
     db.flush()
