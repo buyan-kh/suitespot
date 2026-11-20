@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 // Task 4.3.2 - after a cancel or change, show a confirmation here and highlight the booking.
 // Other flows (e.g. the change flow, 4.3.1) can send the user back with:
 //   /bookings?done=changed&id=<reservationId>    or    /bookings?done=cancelled&id=<reservationId>
+// Task 2.4.3 - /bookings?highlight=<reservationId> outlines and scrolls to one booking (no banner).
 
 type Tab = "upcoming" | "past" | "cancelled";
 type Data = Record<Tab, BookingCardData[]>;
@@ -56,6 +57,18 @@ function MyBookings() {
   const done = localDone ?? fromUrl;
   const doneBooking = done && data ? [...data.upcoming, ...data.past, ...data.cancelled].find((b) => b.id === done.id) : undefined;
   const doneName = done?.hotelName ?? doneBooking?.hotel.name;
+  const highlightId = params.get("highlight");
+  const focusId = done?.id ?? highlightId;
+  const focusTab: Tab | null =
+    focusId && data
+      ? data.cancelled.some((b) => b.id === focusId)
+        ? "cancelled"
+        : data.past.some((b) => b.id === focusId)
+          ? "past"
+          : data.upcoming.some((b) => b.id === focusId)
+            ? "upcoming"
+            : null
+      : null;
 
   const reload = useCallback(() => {
     fetchBookings()
@@ -98,13 +111,25 @@ function MyBookings() {
     });
   }
 
-  // Bring the changed/cancelled booking into view once the list has loaded.
-  const doneTargetId = done?.id;
+  // Bring the changed/cancelled/highlighted booking into view once the list has loaded.
   useEffect(() => {
-    if (!doneTargetId || !data) return;
-    const target = document.getElementById(`booking-${doneTargetId}`) ?? document.getElementById("booking-done");
+    if (!focusId || !data) return;
+    const target = document.getElementById(`booking-${focusId}`) ?? document.getElementById("booking-done");
     target?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [doneTargetId, data, tab]);
+  }, [focusId, data, tab]);
+
+  // A ?highlight link opens the tab that booking is in.
+  const highlightTab = highlightId && !done ? focusTab : null;
+  const switchedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!highlightTab || !highlightId || switchedFor.current === highlightId) return;
+    switchedFor.current = highlightId; // only once, so the user can still change tabs
+    if (params.get("tab") === highlightTab || (highlightTab === "upcoming" && !params.get("tab"))) return;
+    const q = new URLSearchParams(params.toString());
+    if (highlightTab === "upcoming") q.delete("tab");
+    else q.set("tab", highlightTab);
+    router.replace(`${pathname}?${q.toString()}`, { scroll: false });
+  }, [highlightTab, highlightId, params, pathname, router]);
 
   const doneTab: Tab | null = doneBooking
     ? data!.cancelled.includes(doneBooking)
@@ -208,7 +233,7 @@ function MyBookings() {
           </div>
         ) : (
           list.map((b) => (
-            <BookingCard key={b.id} booking={b} onCancel={setCancelling} highlighted={done?.id === b.id} />
+            <BookingCard key={b.id} booking={b} onCancel={setCancelling} highlighted={focusId === b.id} />
           ))
         )}
       </section>
