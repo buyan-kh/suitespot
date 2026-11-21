@@ -7,6 +7,7 @@ from app.database import get_db
 from app.dependencies.auth import get_current_user
 from app.models import User
 from app.services.booking_availability import InvalidStay, RoomNotFound, RoomUnavailable, place_hold
+from app.services.overlap import OverlappingStay
 
 router = APIRouter(prefix="/reservations", tags=["reservations"])
 
@@ -27,6 +28,12 @@ def create_reservation(body: CreateReservation, user: User = Depends(get_current
         raise HTTPException(404, "Room not found.")
     except RoomUnavailable:
         raise HTTPException(409, "Room is unavailable for those dates.")
+    except OverlappingStay as exc:
+        raise HTTPException(409, {
+            "code": "overlapping_stay",
+            "message": "You already have a reservation at another hotel on those dates.",
+            "conflicting_reservation_id": exc.reservation.id,
+        })
     except InvalidStay as exc:
         raise HTTPException(422, {"field": exc.field, "message": exc.message})
     return {"id": reservation.id, "room_id": reservation.room_id,

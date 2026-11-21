@@ -3,3 +3,6 @@ dist/
 venv/
 __pycache__/
 .env
+# SQLite test databases
+*.db
+*.sqlite

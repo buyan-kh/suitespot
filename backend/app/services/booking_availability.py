@@ -8,6 +8,7 @@ from app.models.reservation import Reservation
 from app.models.room import Room
 from app.models.user import User
 from app.services.availability import FREE_STATUSES, is_room_available
+from app.services.overlap import OverlappingStay, find_overlapping_stay
 from app.services.pricing import stay_total
 from app.services.stay_overlap import StayConflict, find_overlapping_stay
 
@@ -147,6 +148,18 @@ def place_hold(
     if not is_room_available(db, room.id, check_in, check_out):
         db.rollback()  # release the room lock
         raise RoomUnavailable("This room is no longer available for those dates.")
+
+    # 2.4.1 — block guests from holding two hotels on the same nights
+    conflict = find_overlapping_stay(
+        db,
+        user_id=user_id,
+        hotel_id=room.hotel_id,
+        check_in=check_in,
+        check_out=check_out,
+    )
+    if conflict:
+        db.rollback()
+        raise OverlappingStay(conflict)
 
     nights = (check_out - check_in).days
     total_price = stay_total(room.price_per_night, nights)
