@@ -39,10 +39,16 @@ def _utc(value: datetime) -> datetime:
 
 
 def _amount_paid(reservation: Reservation) -> Decimal:
-    return money(sum(
-        (Decimal(str(p.amount)) for p in reservation.payments if p.status == PAYMENT_SUCCEEDED),
-        Decimal("0"),
-    ))
+    return money(
+        sum(
+            (
+                Decimal(str(p.amount))
+                for p in reservation.payments
+                if p.status == PAYMENT_SUCCEEDED
+            ),
+            Decimal("0"),
+        )
+    )
 
 
 def _hold_expires_at(reservation: Reservation) -> datetime | None:
@@ -51,20 +57,28 @@ def _hold_expires_at(reservation: Reservation) -> datetime | None:
     return _utc(reservation.created_at) + timedelta(minutes=HOLD_MINUTES)
 
 
-def _classify(reservation: Reservation, today: date, now: datetime) -> tuple[str, str] | None:
+def _classify(
+    reservation: Reservation,
+    today: date,
+    now: datetime,
+) -> tuple[str, str] | None:
     """Return (group, badge), or None to hide the reservation."""
     status = reservation.status
+
     if status == "pending":
         expires = _hold_expires_at(reservation)
         if expires is not None and now < expires:
             return "upcoming", "awaiting_payment"
         return None
+
     if status == "confirmed":
         if reservation.check_out_date > today:
             return "upcoming", "confirmed"
         return "past", "completed"
+
     if status == "completed":
         return "past", "completed"
+
     if status == "cancelled":
         # A fully refunded booking has net amount_paid == 0, but it still
         # belongs in the cancelled list because the original charge existed.
@@ -76,38 +90,70 @@ def _classify(reservation: Reservation, today: date, now: datetime) -> tuple[str
         ):
             return "cancelled", "cancelled"
         return None
-    return None  # an unknown status is not shown rather than guessed at
+
+    return None
 
 
-def _cover_photos(db: Session, hotel_ids: set[str], base_url: str) -> dict[str, dict]:
+def _cover_photos(
+    db: Session,
+    hotel_ids: set[str],
+    base_url: str,
+) -> dict[str, dict]:
     """First photo per hotel, in the same order as GET /hotels/{id}/images."""
     if not hotel_ids:
         return {}
+
     rows = db.scalars(
         select(HotelImage)
         .where(HotelImage.hotel_id.in_(hotel_ids))
-        .order_by(HotelImage.hotel_id, HotelImage.room_type.is_not(None), HotelImage.position)
+        .order_by(
+            HotelImage.hotel_id,
+            HotelImage.room_type.is_not(None),
+            HotelImage.position,
+        )
     ).all()
+
     covers: dict[str, dict] = {}
     for row in rows:
         covers.setdefault(row.hotel_id, serialize(row, base_url))
+
     return covers
 
 
-def _card(reservation: Reservation, badge: str, cover: dict | None) -> dict:
+def _card(
+    reservation: Reservation,
+    badge: str,
+    cover: dict | None,
+) -> dict:
     room, hotel = reservation.room, reservation.room.hotel
+
     return {
         "id": reservation.id,
         "status": badge,
-        "hotel": {"id": hotel.id, "name": hotel.name, "city": hotel.city, "image": cover},
-        "room": {"id": room.id, "room_type": room.room_type, "room_number": room.room_number},
+        "hotel": {
+            "id": hotel.id,
+            "name": hotel.name,
+            "city": hotel.city,
+            "image": cover,
+        },
+        "room": {
+            "id": room.id,
+            "room_type": room.room_type,
+            "room_number": room.room_number,
+        },
         "check_in": reservation.check_in_date,
         "check_out": reservation.check_out_date,
-        "nights": (reservation.check_out_date - reservation.check_in_date).days,
+        "nights": (
+            reservation.check_out_date - reservation.check_in_date
+        ).days,
         "num_guests": reservation.num_guests,
         "total_price": float(money(reservation.total_price)),
         "amount_paid": float(_amount_paid(reservation)),
-        "hold_expires_at": _hold_expires_at(reservation) if badge == "awaiting_payment" else None,
+        "hold_expires_at": (
+            _hold_expires_at(reservation)
+            if badge == "awaiting_payment"
+            else None
+        ),
     }
 
 
@@ -131,21 +177,55 @@ def my_reservations(
     ).all()
 
     placed: list[tuple[str, str, Reservation]] = []
+
     for reservation in reservations:
         result = _classify(reservation, today, now)
         if result is not None:
             placed.append((*result, reservation))
 
-    covers = _cover_photos(db, {r.room.hotel_id for _, _, r in placed}, base_url)
-    groups: dict[str, list[tuple[Reservation, dict]]] = {"upcoming": [], "past": [], "cancelled": []}
+    covers = _cover_photos(
+        db,
+        {reservation.room.hotel_id for _, _, reservation in placed},
+        base_url,
+    )
+
+    groups: dict[str, list[tuple[Reservation, dict]]] = {
+        "upcoming": [],
+        "past": [],
+        "cancelled": [],
+    }
+
     for group, badge, reservation in placed:
-        groups[group].append((reservation, _card(reservation, badge, covers.get(reservation.room.hotel_id))))
+        groups[group].append(
+            (
+                reservation,
+                _card(
+                    reservation,
+                    badge,
+                    covers.get(reservation.room.hotel_id),
+                ),
+            )
+        )
 
     # Soonest stay first; most recent past stay first; latest cancellation first.
-    groups["upcoming"].sort(key=lambda pair: (pair[0].check_in_date, pair[0].id))
-    groups["past"].sort(key=lambda pair: (pair[0].check_out_date, pair[0].id), reverse=True)
-    groups["cancelled"].sort(
-        key=lambda pair: (_utc(pair[0].updated_at) if pair[0].updated_at else now, pair[0].id),
+    groups["upcoming"].sort(
+        key=lambda pair: (pair[0].check_in_date, pair[0].id)
+    )
+    groups["past"].sort(
+        key=lambda pair: (pair[0].check_out_date, pair[0].id),
         reverse=True,
     )
-    return Grouped(**{name: [card for _, card in pairs] for name, pairs in groups.items()})
+    groups["cancelled"].sort(
+        key=lambda pair: (
+            _utc(pair[0].updated_at) if pair[0].updated_at else now,
+            pair[0].id,
+        ),
+        reverse=True,
+    )
+
+    return Grouped(
+        **{
+            name: [card for _, card in pairs]
+            for name, pairs in groups.items()
+        }
+    )
