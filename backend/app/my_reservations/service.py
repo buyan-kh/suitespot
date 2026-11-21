@@ -66,7 +66,14 @@ def _classify(reservation: Reservation, today: date, now: datetime) -> tuple[str
     if status == "completed":
         return "past", "completed"
     if status == "cancelled":
-        if _amount_paid(reservation) > 0:
+        # A fully refunded booking has net amount_paid == 0, but it still
+        # belongs in the cancelled list because the original charge existed.
+        if any(
+            p.status == PAYMENT_SUCCEEDED
+            and p.amount is not None
+            and Decimal(str(p.amount)) > 0
+            for p in reservation.payments
+        ):
             return "cancelled", "cancelled"
         return None
     return None  # an unknown status is not shown rather than guessed at
