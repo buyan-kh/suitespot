@@ -8,7 +8,7 @@ from app.amenities import router as amenities
 from app.images import router as images
 from app.images.resize import SIZED_DIR
 from app.my_reservations import router as my_reservations
-from app.routers import auth_tokens, breakdown, cancel, health, hotels, login, logout, redemption, register, reservations, search, verify_total
+from app.routers import auth_tokens, breakdown, cancel, health, hotels, login, logout, payment, redemption, register, reservations, search, verify_total
 
 app = FastAPI(title="SuiteSpot API", version="0.1.0")
 
@@ -40,6 +40,7 @@ app.include_router(register.router)
 app.include_router(login.router)
 app.include_router(hotels.router)
 app.include_router(reservations.router)
+app.include_router(payment.router)
 app.include_router(logout.router)
 app.include_router(cancel.router)
 app.include_router(verify_total.router)
