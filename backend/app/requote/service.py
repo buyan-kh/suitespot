@@ -4,6 +4,9 @@ Read-only: nothing is written. The new stay is priced like a new booking, at
 the room's current nightly rate through stay_total() (the same function
 place_hold uses), so a quote always equals what a fresh hold would store.
 
+It refuses whatever modify (2.3.1) refuses, with the same errors, including the
+US2.4 rule: no stays at two different hotels on the same nights.
+
 Change fees (US3.6) are not included yet; when they arrive they belong in
 _quote() next to `proposed_total`.
 """
@@ -17,8 +20,9 @@ from sqlalchemy.orm import Session
 
 from app.models import Hotel, Payment, Reservation, Room
 from app.services.availability import FREE_STATUSES
-from app.services.booking_availability import HOLD_MINUTES, STATUS_PENDING
+from app.services.booking_availability import HOLD_MINUTES, STATUS_PENDING, OverlappingStay
 from app.services.pricing import money, stay_total
+from app.services.stay_overlap import find_overlapping_stay
 
 CHANGEABLE_STATUSES = ("pending", "confirmed")
 PAYMENT_SUCCEEDED = "succeeded"
@@ -173,6 +177,19 @@ def quote_change(
         raise InvalidChange(
             "num_guests", f"This room sleeps at most {room.max_guests} guests."
         )
+
+    # US2.4, checked at the same point as modify so both report the same error.
+    # Modify releases expired holds first; the quote is read-only, so it skips one
+    # instead. (If that expired hold hides a second clash, the quote misses it until
+    # the hold is released by the next booking or modify; modify still refuses.)
+    conflict = find_overlapping_stay(
+        db, user_id=user_id, hotel_id=room.hotel_id, check_in=new_in,
+        check_out=new_out, exclude_reservation_id=reservation.id,
+    )
+    if conflict is not None and not _hold_expired(
+        db.get(Reservation, conflict.reservation_id), now
+    ):
+        raise OverlappingStay(conflict)
 
     if _overlaps_another_stay(
         db, room_id=room.id, check_in=new_in, check_out=new_out, skip_id=reservation.id,

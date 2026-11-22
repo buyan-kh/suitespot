@@ -238,13 +238,6 @@ def test_a_stay_at_a_since_deactivated_hotel_still_blocks(client, db_session, gu
 
 # --- 4. Changing a booking ----------------------------------------------------
 
-QUOTE_GAP = pytest.mark.xfail(
-    strict=True,
-    reason="modify (2.3.1) and the re-quote (2.3.2) don't apply the US2.4 rule yet; "
-           "remove this marker when they call find_overlapping_stay",
-)
-
-
 @pytest.fixture
 def two_stays(client, guest, room_a, room_b):
     """Aurora on IN..OUT, and a later Borealis stay that could be moved onto it."""
@@ -259,7 +252,7 @@ def change(client, guest, reservation_id, body, *, quote=False):
     return client.patch(f"/reservations/{reservation_id}", json=body, headers=auth(guest))
 
 
-@pytest.mark.parametrize("quote", [False, pytest.param(True, marks=QUOTE_GAP)], ids=["modify", "quote"])
+@pytest.mark.parametrize("quote", [False, True], ids=["modify", "quote"])
 def test_moving_dates_onto_another_hotels_nights_is_refused(client, guest, two_stays, quote):
     aurora_stay, borealis_stay = two_stays
     response = change(client, guest, borealis_stay["id"],
@@ -268,7 +261,7 @@ def test_moving_dates_onto_another_hotels_nights_is_refused(client, guest, two_s
     assert error_of(response)["type"] == "overlapping_stay"
 
 
-@pytest.mark.parametrize("quote", [False, pytest.param(True, marks=QUOTE_GAP)], ids=["modify", "quote"])
+@pytest.mark.parametrize("quote", [False, True], ids=["modify", "quote"])
 def test_moving_room_and_dates_onto_another_hotels_nights_is_refused(
     client, guest, room_c, two_stays, quote
 ):

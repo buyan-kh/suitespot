@@ -103,11 +103,9 @@ SCENARIOS = {
 }
 
 
-# Known differences, tracked until the quote endpoint is aligned (they start passing,
-# and pytest reports XPASS, once Darren's quote is fixed; then drop the entry).
-KNOWN_DIFFERENCES = {
-    "overlaps a stay at another hotel": "the quote doesn't apply the US2.4 rule yet; modify refuses it",
-}
+# Known differences between quote and modify, as {scenario: reason}; each one runs
+# as an xfail until fixed. None right now: keep it that way.
+KNOWN_DIFFERENCES: dict[str, str] = {}
 PARAMS = [
     pytest.param(name, marks=pytest.mark.xfail(reason=KNOWN_DIFFERENCES[name]))
     if name in KNOWN_DIFFERENCES else name
