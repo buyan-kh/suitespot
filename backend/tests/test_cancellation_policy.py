@@ -21,14 +21,16 @@ TODAY = date(2024, 11, 15)
 def test_more_than_7_days_is_free():
     assert cancellation_tier(TODAY + timedelta(days=8), TODAY) == TIER_FREE
 
-def test_exactly_7_days_is_free():
-    assert cancellation_tier(TODAY + timedelta(days=7), TODAY) == TIER_FREE
+def test_exactly_7_days_is_partial():
+    # Exactly 7 days out → partial (50% fee), not free
+    assert cancellation_tier(TODAY + timedelta(days=7), TODAY) == TIER_PARTIAL
 
 def test_6_days_is_partial():
     assert cancellation_tier(TODAY + timedelta(days=6), TODAY) == TIER_PARTIAL
 
-def test_exactly_2_days_is_partial():
-    assert cancellation_tier(TODAY + timedelta(days=2), TODAY) == TIER_PARTIAL
+def test_exactly_2_days_is_full():
+    # Exactly 2 days out → no refund, not partial
+    assert cancellation_tier(TODAY + timedelta(days=2), TODAY) == TIER_FULL
 
 def test_1_day_is_full():
     assert cancellation_tier(TODAY + timedelta(days=1), TODAY) == TIER_FULL

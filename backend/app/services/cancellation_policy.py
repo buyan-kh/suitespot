@@ -55,18 +55,22 @@ def cancellation_tier(check_in: date, today: date | None = None) -> str:
     >>> today = date(2024, 11, 1)
     >>> cancellation_tier(today + timedelta(days=10), today)
     'free'
+    >>> cancellation_tier(today + timedelta(days=7), today)  # exactly 7 → partial
+    'partial'
     >>> cancellation_tier(today + timedelta(days=5), today)
     'partial'
+    >>> cancellation_tier(today + timedelta(days=2), today)  # exactly 2 → full
+    'full'
     >>> cancellation_tier(today + timedelta(days=1), today)
     'full'
     """
     today = today or datetime.now(timezone.utc).date()
     days_left = (check_in - today).days
-    if days_left >= _PARTIAL_DAYS:
+    if days_left > _PARTIAL_DAYS:   # strictly more than 7 days → free
         return TIER_FREE
-    if days_left >= _FULL_DAYS:
+    if days_left > _FULL_DAYS:      # strictly more than 2 days → 50 % fee
         return TIER_PARTIAL
-    return TIER_FULL
+    return TIER_FULL                # 2 days or fewer → no refund
 
 
 def cancellation_refund(
