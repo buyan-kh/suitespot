@@ -8,7 +8,7 @@ so the history is fully auditable and reversals are just negative entries.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -34,6 +34,13 @@ class PointsLedger(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Prevents double-awarding: each (reservation_id, reason) pair may only
+    # appear once.  NULL reservation_id rows (manual adjustments) are exempt
+    # because NULL != NULL in SQL unique indexes.
+    __table_args__ = (
+        UniqueConstraint("reservation_id", "reason", name="uq_points_ledger_reservation_reason"),
     )
 
     user = relationship("User", back_populates="points_ledger")
