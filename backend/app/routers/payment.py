@@ -53,6 +53,17 @@ def confirm_payment(
       or the transaction ID is already used by another reservation.
     - **422** — missing / invalid request body fields.
     """
+    # Ownership check: look up the reservation first to verify it belongs to this user.
+    # We import here to avoid a circular dependency on the models package.
+    from sqlalchemy import select as _select
+    from app.models.reservation import Reservation as _Reservation
+    _res = db.execute(
+        _select(_Reservation).where(_Reservation.id == reservation_id)
+    ).scalar_one_or_none()
+    if _res is None or _res.user_id != user.id:
+        # Return 404 for both "not found" and "not yours" — avoids leaking existence.
+        raise HTTPException(404, "Reservation not found.")
+
     try:
         result: Confirmation = confirm_booking(
             db,

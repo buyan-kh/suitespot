@@ -151,6 +151,46 @@ def test_confirm_payment_requires_auth(client, db_session):
     assert r.status_code == 401
 
 
+def test_confirm_payment_other_user_reservation(client, db_session):
+    """A user cannot confirm a reservation that belongs to someone else (security fix)."""
+    # Register and log in as the reservation owner
+    client.post("/register", json={
+        "email": "owner@test.com", "password": "Password1!",
+        "first_name": "O", "last_name": "Wner",
+    })
+    # Register and log in as the attacker
+    client.post("/register", json={
+        "email": "attacker@test.com", "password": "Password1!",
+        "first_name": "A", "last_name": "Ttack",
+    })
+    r_atk = client.post("/login", json={"email": "attacker@test.com", "password": "Password1!"})
+    attacker_token = r_atk.json()["access_token"]
+
+    from app.models.user import User as UserModel
+    owner = db_session.query(UserModel).filter_by(email="owner@test.com").first()
+    hotel = Hotel(name="H_own", address="1 St", city="SF", country="US",
+                  star_rating=3, is_active=True)
+    db_session.add(hotel)
+    db_session.flush()
+    room = Room(hotel_id=hotel.id, room_number="201", room_type="double",
+                price_per_night=100, max_guests=2)
+    db_session.add(room)
+    db_session.flush()
+    res = Reservation(user_id=owner.id, room_id=room.id,
+                      check_in_date=date(2030,6,1), check_out_date=date(2030,6,3),
+                      num_guests=1, total_price=200, status="pending")
+    db_session.add(res)
+    db_session.commit()
+
+    r = client.post(f"/reservations/{res.id}/confirm", json={
+        "amount": 200.00,
+        "payment_method": "card",
+        "transaction_id": "txn_stolen",
+    }, headers={"Authorization": f"Bearer {attacker_token}"})
+    # Must be 404 — attacker cannot even learn the reservation exists
+    assert r.status_code == 404
+
+
 def test_confirm_payment_already_confirmed_different_charge(client, db_session):
     """A second charge on an already-confirmed reservation is rejected."""
     token = _login(client)
