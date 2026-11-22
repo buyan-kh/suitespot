@@ -13,7 +13,7 @@ from app.requote.service import (
     quote_change,
 )
 from app.security import issue_tokens
-from app.services.booking_availability import place_hold
+from app.services.booking_availability import OverlappingStay, place_hold
 
 TODAY = datetime.now(timezone.utc).date()
 
@@ -254,6 +254,37 @@ def test_moving_to_a_room_that_is_taken(db_session, user, other, booking):
     reserve(db_session, other, taken, check_in=day(9), nights=2)
     with pytest.raises(RoomUnavailable):
         quote(db_session, user, booking, room_id=taken.id)
+
+
+# 6b. No stays at two different hotels on the same nights (US2.4), as in modify.
+
+def another_hotel_room(db):
+    hotel = Hotel(name="Hotel Borealis", address="2 Main", city="San Jose", country="US")
+    db.add(hotel)
+    db.flush()
+    return make_room(db, hotel=hotel, number="B1")
+
+
+def test_moving_onto_nights_held_at_another_hotel_is_refused(db_session, user, booking):
+    elsewhere = reserve(db_session, user, another_hotel_room(db_session), check_in=day(20), nights=3)
+    with pytest.raises(OverlappingStay) as refused:
+        quote(db_session, user, booking, check_in=day(21), check_out=day(24))
+    assert refused.value.conflict.reservation_id == elsewhere.id
+    assert refused.value.conflict.hotel_name == "Hotel Borealis"
+
+
+def test_an_expired_hold_at_another_hotel_does_not_block(db_session, user, booking):
+    # Modify releases it first, so the quote must not count it either.
+    hold = reserve(db_session, user, another_hotel_room(db_session), check_in=day(20), nights=3,
+                   status="pending")
+    expire(db_session, hold)
+    assert quote(db_session, user, booking, check_in=day(21), check_out=day(24)).proposed.nights == 3
+
+
+def test_overlapping_nights_at_the_same_hotel_are_fine(db_session, user, room, booking):
+    second_room = make_room(db_session, hotel=db_session.get(Hotel, room.hotel_id), number="102")
+    reserve(db_session, user, second_room, check_in=day(20), nights=3)
+    assert quote(db_session, user, booking, check_in=day(21), check_out=day(24)).proposed.nights == 3
 
 
 # 7. Validation.
