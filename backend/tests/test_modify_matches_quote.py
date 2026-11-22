@@ -91,6 +91,10 @@ SCENARIOS = {
     "stay already started": lambda c: (started(c), {"check_out": D(4)})[1],
     "paid, two more nights": lambda c: (paid(c), {"check_out": D(15)})[1],
     "paid, one night less": lambda c: (paid(c), {"check_out": D(12)})[1],
+    "overlaps a stay at another hotel": lambda c: (
+        place_hold(c["db"], user_id=c["booking"].user_id, room_id=make_room(c["db"], 100, "9").id,
+                   check_in=D(20), check_out=D(23)),
+        {"check_in": D(21), "check_out": D(24)})[1],
     "empty request": lambda c: {},
     "unknown field": lambda c: {"num_guests": 2, "total_price": 1},
     "expired unpaid hold": lambda c: (
@@ -102,9 +106,7 @@ SCENARIOS = {
 # Known differences, tracked until the quote endpoint is aligned (they start passing,
 # and pytest reports XPASS, once Darren's quote is fixed; then drop the entry).
 KNOWN_DIFFERENCES = {
-    "empty request": "quote treats {} as 'no change'; modify refuses it",
-    "unknown field": "quote ignores unknown fields; modify refuses them",
-    "expired unpaid hold": "quote prices a hold that has expired; modify refuses it",
+    "overlaps a stay at another hotel": "the quote doesn't apply the US2.4 rule yet; modify refuses it",
 }
 PARAMS = [
     pytest.param(name, marks=pytest.mark.xfail(reason=KNOWN_DIFFERENCES[name]))

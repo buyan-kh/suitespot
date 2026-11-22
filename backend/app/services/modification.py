@@ -25,14 +25,17 @@ from sqlalchemy.orm import Session
 from app.models.hotel import Hotel
 from app.models.reservation import Reservation
 from app.models.room import Room
+from app.models.user import User
 from app.services.availability import FREE_STATUSES, is_room_available
 from app.services.booking_availability import (
     InvalidStay,
+    OverlappingStay,
     RoomNotFound,
     RoomUnavailable,
     release_expired_holds,
 )
 from app.services.pricing import money, stay_total
+from app.services.stay_overlap import find_overlapping_stay
 
 MODIFIABLE_STATUSES = ("pending", "confirmed")
 STATUS_CANCELLED = FREE_STATUSES[0]
@@ -75,85 +78,164 @@ def modify_reservation(
     num_guests: int | None = None,
     now: datetime | None = None,
 ) -> Modification:
-    """Apply the changes to one of the user's own reservations and return the result.
+    """Apply changes to one of the user's own reservations."""
 
-    Anything left as None keeps its current value. Raises ReservationNotFound,
-    NotModifiable, InvalidStay, RoomNotFound or RoomUnavailable; in every case
-    nothing has been changed.
-    """
     now = now or datetime.now(timezone.utc)
     today = now.date()
 
-    # Same housekeeping as place_hold: stale unpaid holds must not block the room,
-    # and an expired hold of ours is correctly refused below as cancelled.
     release_expired_holds(db, now=now)
 
-    # FOR UPDATE locks the row on PostgreSQL, so a modify, a cancel (2.2.1) and a
-    # payment confirmation (3.1.4) on the same reservation happen one at a time.
+    # Lock the guest before checking overlapping stays.
+    db.execute(
+        select(User.id)
+        .where(User.id == user_id)
+        .with_for_update()
+    )
+
     reservation = db.execute(
         select(Reservation)
-        .where(Reservation.id == reservation_id, Reservation.user_id == user_id)
+        .where(
+            Reservation.id == reservation_id,
+            Reservation.user_id == user_id,
+        )
         .with_for_update()
     ).scalar_one_or_none()
+
     if reservation is None:
         raise ReservationNotFound(reservation_id)
+
     if reservation.status not in MODIFIABLE_STATUSES:
         db.rollback()
-        raise NotModifiable(f"A {reservation.status} reservation can't be changed.")
+        raise NotModifiable(
+            f"A {reservation.status} reservation can't be changed."
+        )
+
     if reservation.check_in_date < today:
         db.rollback()
-        raise NotModifiable("A stay that has already started can't be changed.")
+        raise NotModifiable(
+            "A stay that has already started can't be changed."
+        )
 
     new_room_id = room_id or reservation.room_id
     new_in = check_in or reservation.check_in_date
     new_out = check_out or reservation.check_out_date
-    new_guests = num_guests if num_guests is not None else reservation.num_guests
+    new_guests = (
+        num_guests
+        if num_guests is not None
+        else reservation.num_guests
+    )
     old_total = money(reservation.total_price)
 
-    if (new_room_id, new_in, new_out, new_guests) == (
-        reservation.room_id, reservation.check_in_date,
-        reservation.check_out_date, reservation.num_guests,
+    if (
+        new_room_id,
+        new_in,
+        new_out,
+        new_guests,
+    ) == (
+        reservation.room_id,
+        reservation.check_in_date,
+        reservation.check_out_date,
+        reservation.num_guests,
     ):
-        db.rollback()  # nothing to change; release the lock
-        return Modification(reservation, old_total, old_total, changed=False)
+        db.rollback()
+        return Modification(
+            reservation,
+            old_total,
+            old_total,
+            changed=False,
+        )
 
     if new_out <= new_in:
         db.rollback()
-        raise InvalidStay("check_out", "Check-out must be after check-in.")
+        raise InvalidStay(
+            "check_out",
+            "Check-out must be after check-in.",
+        )
+
     if new_in < today:
         db.rollback()
-        raise InvalidStay("check_in", "Check-in cannot be in the past.")
+        raise InvalidStay(
+            "check_in",
+            "Check-in cannot be in the past.",
+        )
+
     if new_guests < 1:
         db.rollback()
-        raise InvalidStay("num_guests", "Number of guests must be at least 1.")
+        raise InvalidStay(
+            "num_guests",
+            "Number of guests must be at least 1.",
+        )
 
-    # Lock the room we are moving to, like place_hold, so two guests can't both
-    # take the last free dates at the same moment.
     room = db.execute(
-        select(Room).where(Room.id == new_room_id).with_for_update()
+        select(Room)
+        .where(Room.id == new_room_id)
+        .with_for_update()
     ).scalar_one_or_none()
+
     hotel = db.get(Hotel, room.hotel_id) if room is not None else None
+
     if room is None or hotel is None or not hotel.is_active:
         db.rollback()
-        raise RoomNotFound(f"Room {new_room_id} does not exist.")
+        raise RoomNotFound(
+            f"Room {new_room_id} does not exist."
+        )
+
     if new_guests > room.max_guests:
         db.rollback()
-        raise InvalidStay("num_guests", f"This room sleeps at most {room.max_guests} guests.")
+        raise InvalidStay(
+            "num_guests",
+            f"This room sleeps at most {room.max_guests} guests.",
+        )
 
+    # A guest cannot hold stays at different hotels on overlapping nights.
+    conflict = find_overlapping_stay(
+        db,
+        user_id=user_id,
+        hotel_id=room.hotel_id,
+        check_in=new_in,
+        check_out=new_out,
+        exclude_reservation_id=reservation.id,
+    )
+
+    if conflict is not None:
+        db.rollback()
+        raise OverlappingStay(conflict)
+
+    # Temporarily cancel this reservation so it does not conflict with itself.
     original_status = reservation.status
-    reservation.status = STATUS_CANCELLED  # so the rule doesn't count us against ourselves
+    reservation.status = STATUS_CANCELLED
     db.flush()
-    if not is_room_available(db, room.id, new_in, new_out):
-        db.rollback()  # discards the temporary status and releases the locks
-        raise RoomUnavailable("That room is not available for the new dates.")
+
+    if not is_room_available(
+        db,
+        room.id,
+        new_in,
+        new_out,
+    ):
+        db.rollback()
+        raise RoomUnavailable(
+            "That room is not available for the new dates."
+        )
+
     reservation.status = original_status
 
-    new_total = stay_total(room.price_per_night, (new_out - new_in).days)
+    new_total = stay_total(
+        room.price_per_night,
+        (new_out - new_in).days,
+    )
+
     reservation.room_id = room.id
     reservation.check_in_date = new_in
     reservation.check_out_date = new_out
     reservation.num_guests = new_guests
     reservation.total_price = new_total
+
     db.commit()
     db.refresh(reservation)
-    return Modification(reservation, old_total, new_total, changed=True)
+
+    return Modification(
+        reservation,
+        old_total,
+        new_total,
+        changed=True,
+    )
