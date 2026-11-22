@@ -3,9 +3,12 @@
 Returns the rate per night, number of nights, each fee line item, tax, and
 total so the checkout screen can show a fully itemised summary before the
 guest pays.
+
+The ``total`` in this response always equals ``Reservation.total_price``
+because both are computed by the same fee rules in ``app.services.pricing``.
 """
 
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -15,25 +18,9 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies.auth import get_current_user
 from app.models import Reservation, Room, User
+from app.services.pricing import _FEE_RULES, _TAX_RATE, money, stay_total
 
 router = APIRouter(prefix="/reservations", tags=["reservations"])
-
-_CENT = Decimal("0.01")
-_TAX_RATE = Decimal("0.12")
-
-# Fee rules: (label, type, value)
-#   type "pct"   → value is a fraction of subtotal
-#   type "night" → value is a flat amount per night
-#   type "stay"  → value is a flat amount per stay
-_FEE_RULES = [
-    ("Service fee",    "pct",   Decimal("0.10")),
-    ("Resort fee",     "night", Decimal("15.00")),
-    ("Cleaning fee",   "stay",  Decimal("40.00")),
-]
-
-
-def _money(v) -> Decimal:
-    return Decimal(str(v)).quantize(_CENT, rounding=ROUND_HALF_UP)
 
 
 class LineItem(BaseModel):
@@ -69,24 +56,24 @@ def get_breakdown(
         )
 
     room = db.get(Room, reservation.room_id)
-    rate = _money(room.price_per_night) if room else _money(reservation.total_price)
+    rate = money(room.price_per_night) if room else money(0)
     nights = (reservation.check_out_date - reservation.check_in_date).days
-    subtotal = _money(rate * nights)
+    subtotal = stay_total(rate, nights)
 
     fee_lines: list[LineItem] = []
     fee_total = Decimal("0.00")
     for label, kind, value in _FEE_RULES:
         if kind == "pct":
-            amt = _money(subtotal * value)
+            amt = money(subtotal * value)
         elif kind == "night":
-            amt = _money(value * nights)
+            amt = money(value * nights)
         else:  # stay
-            amt = _money(value)
+            amt = money(value)
         fee_lines.append(LineItem(label=label, amount=float(amt)))
         fee_total += amt
 
     pre_tax = subtotal + fee_total
-    tax = _money(pre_tax * _TAX_RATE)
+    tax = money(pre_tax * _TAX_RATE)
     total = pre_tax + tax
 
     return BreakdownResponse(

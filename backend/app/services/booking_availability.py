@@ -7,7 +7,7 @@ from app.models.hotel import Hotel
 from app.models.reservation import Reservation
 from app.models.room import Room
 from app.services.availability import FREE_STATUSES, is_room_available
-from app.services.pricing import stay_total
+from app.services.pricing import full_stay_total, stay_total
 
 HOLD_MINUTES = 15
 STATUS_PENDING = "pending"
@@ -124,7 +124,9 @@ def place_hold(
         raise RoomUnavailable("This room is no longer available for those dates.")
 
     nights = (check_out - check_in).days
-    total_price = stay_total(room.price_per_night, nights)
+    # Bug fix (3.2.1): store the full amount including fees and tax so that the
+    # breakdown endpoint and payment-confirmation always agree on the total.
+    total_price = full_stay_total(room.price_per_night, nights)
 
     reservation = Reservation(
         user_id=user_id,

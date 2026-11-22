@@ -6,10 +6,13 @@ import pytest
 from app.models import Hotel, Reservation, Room, User
 from app.security import issue_tokens
 from app.services.booking_availability import place_hold
-from app.services.pricing import TotalMismatch, money, stay_total, verify_displayed_total
+from app.services.pricing import TotalMismatch, full_stay_total, money, stay_total, verify_displayed_total
 
 TODAY = datetime.now(timezone.utc).date()
-IN, OUT = TODAY + timedelta(days=10), TODAY + timedelta(days=13)  # 3 nights x 100 = 300
+IN, OUT = TODAY + timedelta(days=10), TODAY + timedelta(days=13)  # 3 nights x 100, full total = 464.80
+
+# Full total for the default fixture (3 nights @ $100): subtotal 300 + fees + 12% tax = 464.80
+_DEFAULT_TOTAL = "464.80"
 
 
 def make_user(db, email):
@@ -63,12 +66,12 @@ def verify(client, reservation_id, headers, displayed_total):
 # --- the endpoint -----------------------------------------------------------
 
 def test_matching_total_is_confirmed(client, user, hold):
-    response = verify(client, hold.id, auth(user), 300)
+    response = verify(client, hold.id, auth(user), _DEFAULT_TOTAL)
     assert response.status_code == 200
-    assert response.json() == {"matches": True, "total": 300.0}
+    assert response.json() == {"matches": True, "total": 464.80}
 
 
-@pytest.mark.parametrize("shown", [300, 300.0, "300", "300.00", "300.0"])
+@pytest.mark.parametrize("shown", ["464.80", "464.8", 464.80])
 def test_every_way_of_writing_the_same_total_matches(client, user, hold, shown):
     assert verify(client, hold.id, auth(user), shown).status_code == 200
 
@@ -80,7 +83,7 @@ def test_a_different_total_is_refused_with_the_real_one(client, user, hold, show
     error = response.json()["detail"][0]
     assert error["type"] == "total_mismatch"
     assert error["loc"] == ["body", "displayed_total"]
-    assert error["ctx"]["expected_total"] == "300.00"
+    assert error["ctx"]["expected_total"] == _DEFAULT_TOTAL
 
 
 @pytest.mark.parametrize("shown", [-1, -0.01, "NaN", "Infinity", "-Infinity", "abc", "", None, [], {}, 300.001])
@@ -124,15 +127,15 @@ def test_a_reservation_that_cannot_be_paid_is_refused(client, db_session, user, 
 def test_a_confirmed_reservation_can_still_be_checked(client, db_session, user, hold):
     hold.status = "confirmed"
     db_session.commit()
-    assert verify(client, hold.id, auth(user), 300).status_code == 200
+    assert verify(client, hold.id, auth(user), _DEFAULT_TOTAL).status_code == 200
 
 
 def test_checking_changes_nothing(client, db_session, user, hold):
     verify(client, hold.id, auth(user), 12345)
-    verify(client, hold.id, auth(user), 300)
+    verify(client, hold.id, auth(user), _DEFAULT_TOTAL)
     db_session.expire_all()
     stored = db_session.get(Reservation, hold.id)
-    assert stored.status == "pending" and float(stored.total_price) == 300.0
+    assert stored.status == "pending" and float(stored.total_price) == 464.80
 
 
 def test_get_is_not_allowed(client, user, hold):
@@ -140,7 +143,7 @@ def test_get_is_not_allowed(client, user, hold):
 
 
 def test_response_has_nothing_extra(client, user, hold):
-    assert set(verify(client, hold.id, auth(user), 300).json()) == {"matches", "total"}
+    assert set(verify(client, hold.id, auth(user), _DEFAULT_TOTAL).json()) == {"matches", "total"}
 
 
 # --- one source of truth for the total --------------------------------------
@@ -167,22 +170,24 @@ def test_the_hold_stores_exactly_the_total_the_screen_can_verify(client, db_sess
         db_session, user_id=user.id, room_id=room.id,
         check_in=IN, check_out=IN + timedelta(days=nights),
     )
-    total = stay_total(rate, nights)
+    # Bug fix: total_price now includes fees + tax, not just subtotal
+    total = full_stay_total(rate, nights)
     assert money(reservation.total_price) == total
     assert verify(client, reservation.id, auth(user), str(total)).status_code == 200
     assert verify(client, reservation.id, auth(user), str(total + Decimal("0.01"))).status_code == 409
 
 
 def test_verify_displayed_total_unit(hold):
-    assert verify_displayed_total(hold, "300.00") == Decimal("300.00")
+    assert verify_displayed_total(hold, _DEFAULT_TOTAL) == Decimal(_DEFAULT_TOTAL)
     with pytest.raises(TotalMismatch) as error:
         verify_displayed_total(hold, 299)
-    assert error.value.expected == Decimal("300.00") and error.value.displayed == Decimal("299.00")
+    assert error.value.expected == Decimal(_DEFAULT_TOTAL) and error.value.displayed == Decimal("299.00")
+
 
 def test_the_hold_uses_the_shared_pricing_function(db_session, user, room, monkeypatch):
-    """Fees added to stay_total() must flow into the hold, the check and the charge."""
+    """full_stay_total() must flow into the hold, the check and the charge."""
     from app.services import booking_availability
 
-    monkeypatch.setattr(booking_availability, "stay_total", lambda rate, nights: Decimal("123.45"))
+    monkeypatch.setattr(booking_availability, "full_stay_total", lambda rate, nights: Decimal("123.45"))
     reservation = place_hold(db_session, user_id=user.id, room_id=room.id, check_in=IN, check_out=OUT)
     assert money(reservation.total_price) == Decimal("123.45")

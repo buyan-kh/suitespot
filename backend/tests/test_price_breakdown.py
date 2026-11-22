@@ -16,7 +16,7 @@ from app.models import Hotel, Room, User
 from app.security import issue_tokens
 from app.services.booking_availability import HOLD_MINUTES, place_hold, release_expired_holds
 from app.services.booking_confirmation import AmountMismatch, confirm_booking
-from app.services.pricing import stay_total
+from app.services.pricing import full_stay_total, stay_total
 
 TODAY = datetime.now(timezone.utc).date()
 
@@ -99,7 +99,8 @@ def test_the_verified_total_is_exactly_what_a_charge_is_accepted_for(
     nights = (check_out - check_in).days
     total = Decimal(str(hold.total_price))
 
-    assert total == stay_total(rate, nights)
+    # Bug fix (3.2.1): total_price now includes fees + tax, not just subtotal.
+    assert total == full_stay_total(rate, nights)
     response = verify(client, user, hold.id, total)
     assert response.status_code == 200, response.text
     assert Decimal(str(response.json()["total"])) == total
@@ -113,7 +114,8 @@ def test_leap_day_stay_counts_two_nights(db_session, user):
     room = make_room(db_session, 100)
     hold = place_hold(db_session, user_id=user.id, room_id=room.id,
                       check_in=LEAP_IN, check_out=LEAP_OUT)
-    assert Decimal(str(hold.total_price)) == Decimal("200.00")
+    # 2 nights @ $100: subtotal 200 + fees + 12% tax = 324.80
+    assert Decimal(str(hold.total_price)) == Decimal("324.80")
 
 
 def test_a_total_verify_refuses_is_also_refused_as_a_charge(client, db_session, user):
@@ -125,7 +127,8 @@ def test_a_total_verify_refuses_is_also_refused_as_a_charge(client, db_session, 
     response = verify(client, user, hold.id, wrong)
     assert response.status_code == 409
     expected = Decimal(response.json()["detail"][0]["ctx"]["expected_total"])
-    assert expected == Decimal("299.97")
+    # 99.99 × 3 nights with fees + 12% tax = 464.77
+    assert expected == full_stay_total(99.99, 3)
 
     with pytest.raises(AmountMismatch):
         pay(db_session, hold.id, wrong)
@@ -142,9 +145,10 @@ def test_rate_change_after_the_hold_keeps_the_quoted_total(client, db_session, u
     room.price_per_night = 150
     db_session.commit()
 
-    assert verify(client, user, hold.id, "300.00").status_code == 200
+    # Quoted total (3 nights @ $100 with fees+tax = 464.80) should still verify even after rate change
+    assert verify(client, user, hold.id, "464.80").status_code == 200
     assert verify(client, user, hold.id, "450.00").status_code == 409
-    assert pay(db_session, hold.id, "300.00").reservation.status == "confirmed"
+    assert pay(db_session, hold.id, "464.80").reservation.status == "confirmed"
 
 
 # 3. Expired holds.
@@ -162,8 +166,9 @@ def test_an_expired_hold_not_yet_released_still_verifies_like_a_late_payment(
     hold.created_at = long_ago
     db_session.commit()
 
-    assert verify(client, user, hold.id, "100.00").status_code == 200
-    assert pay(db_session, hold.id, "100.00").reservation.status == "confirmed"
+    # 1 night @ $100 with fees+tax = 184.80
+    assert verify(client, user, hold.id, "184.80").status_code == 200
+    assert pay(db_session, hold.id, "184.80").reservation.status == "confirmed"
 
 
 def test_a_released_hold_is_not_payable(client, db_session, user):
@@ -173,7 +178,7 @@ def test_a_released_hold_is_not_payable(client, db_session, user):
     later = datetime.now(timezone.utc) + timedelta(minutes=HOLD_MINUTES + 1)
     assert release_expired_holds(db_session, now=later) == 1
 
-    response = verify(client, user, hold.id, "100.00")
+    response = verify(client, user, hold.id, "184.80")
     assert response.status_code == 409
     assert response.json()["detail"][0]["type"] == "not_payable"
 
@@ -207,11 +212,11 @@ def test_backend_and_frontend_agree_to_the_cent(rate, nights):
     assert stay_total(rate, nights) == frontend_stay_total(rate, nights)
 
 
-# 6. Fees and taxes (3.4.1) are not part of the total yet.
+# 6. Fees and taxes are included in the stored total (bug fix 3.2.1 / 3.4.1).
 
-@pytest.mark.xfail(strict=True, reason="Fees and taxes arrive with 3.4.1 (Vincent).")
 def test_the_total_includes_fees_and_taxes(db_session, user):
     room = make_room(db_session, 100)
     hold = place_hold(db_session, user_id=user.id, room_id=room.id,
                       check_in=TODAY + timedelta(days=5), check_out=TODAY + timedelta(days=8))
-    assert Decimal(str(hold.total_price)) > Decimal("300.00")
+    # 3 nights @ $100: subtotal 300 + service fee (30) + resort fee (45) + cleaning (40) + 12% tax = 464.80
+    assert Decimal(str(hold.total_price)) == Decimal("464.80")
