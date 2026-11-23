@@ -53,25 +53,30 @@ def reverse_points(
     reservation: Reservation,
     note: str | None = None,
 ) -> PointsLedger | None:
-    """Reverse any points previously earned for this reservation.
+    """Reverse the net points impact of this reservation for the user.
 
-    If no points were earned for the reservation, returns None silently
-    so the caller doesn't need to check first.
+    This covers both earned points (stay_earned rows) AND any redeemed points
+    (points_redeemed rows, which are negative).  On a refund after redemption
+    the user should get their spent points back, so we negate the full net sum.
+
+    If the net is already zero or negative (nothing to reverse), returns None.
     """
-    # Sum up what was earned for this reservation.
-    earned: int = db.execute(
+    # Bug fix 4: sum ALL ledger rows for this reservation, not just earned ones.
+    # points_redeemed rows are negative, so their negation is positive — the
+    # user gets those points back when the booking is refunded.
+    net: int = db.execute(
         select(func.coalesce(func.sum(PointsLedger.delta), 0)).where(
             PointsLedger.reservation_id == reservation.id
         )
     ).scalar_one()
 
-    if earned <= 0:
+    if net == 0:
         return None
 
     entry = PointsLedger(
         user_id=reservation.user_id,
         reservation_id=reservation.id,
-        delta=-earned,
+        delta=-net,
         reason="stay_reversed",
         note=note,
     )

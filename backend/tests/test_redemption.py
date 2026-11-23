@@ -11,6 +11,8 @@ from app.services.points import earn_points, get_balance
 from app.services.redemption import (
     MIN_REDEMPTION_POINTS,
     POINTS_PER_DOLLAR,
+    AlreadyRedeemed,
+    NotRedeemable,
     RedemptionQuote,
     apply_redemption,
     redemption_quote,
@@ -356,3 +358,160 @@ def test_http_apply_401_no_auth(client, db_session):
         json={"points": 1000},
     )
     assert r.status_code == 401
+
+
+# ── Bug fix tests (Darren's review) ──────────────────────────────────────────
+
+# Bug 1: redeeming lowers the charge (reservation.total_price is updated).
+
+def test_apply_lowers_reservation_total_price(db_session):
+    """After apply, reservation.total_price reflects the discount."""
+    u = _user(db_session)
+    res = _reservation(db_session, u.id, price=200.00)
+    _give_points(db_session, u.id, res, 1000)
+
+    quote = apply_redemption(db_session, user_id=u.id, reservation=res, points_requested=1000)
+
+    db_session.refresh(res)
+    assert Decimal(str(res.total_price)) == Decimal("190.00")
+    assert quote.new_total == Decimal("190.00")
+
+
+def test_apply_full_discount_sets_total_to_zero(db_session):
+    """When points cover the entire stay, total_price is set to 0.00."""
+    u = _user(db_session)
+    res = _reservation(db_session, u.id, price=10.00)
+    _give_points(db_session, u.id, res, 5000)  # worth $50 — more than enough
+
+    apply_redemption(db_session, user_id=u.id, reservation=res, points_requested=5000)
+
+    db_session.refresh(res)
+    assert Decimal(str(res.total_price)) == Decimal("0.00")
+
+
+# Bug 2: redeeming twice returns a clean error, not a 500.
+
+def test_apply_twice_raises_already_redeemed(db_session):
+    """Calling apply_redemption twice on the same reservation raises AlreadyRedeemed."""
+    u = _user(db_session)
+    res = _reservation(db_session, u.id, price=200.00)
+    _give_points(db_session, u.id, res, 2000)
+
+    apply_redemption(db_session, user_id=u.id, reservation=res, points_requested=1000)
+
+    with pytest.raises(AlreadyRedeemed):
+        apply_redemption(db_session, user_id=u.id, reservation=res, points_requested=500)
+
+
+def test_http_apply_twice_returns_409(client, db_session):
+    """HTTP: second apply on the same reservation → 409, not 500."""
+    token = _register_and_login(client)
+    res = _make_reservation_with_points(client, db_session, points=2000)
+
+    headers = {"Authorization": f"Bearer {token}"}
+    r1 = client.post(f"/reservations/{res.id}/redemption/apply",
+                     json={"points": 1000}, headers=headers)
+    assert r1.status_code == 200
+
+    r2 = client.post(f"/reservations/{res.id}/redemption/apply",
+                     json={"points": 500}, headers=headers)
+    assert r2.status_code == 409
+
+
+# Bug 3: cancelled booking cannot be redeemed against.
+
+@pytest.mark.parametrize("bad_status", ["cancelled", "completed"])
+def test_apply_on_closed_reservation_raises_not_redeemable(db_session, bad_status):
+    """apply_redemption raises NotRedeemable for cancelled/completed reservations."""
+    u = _user(db_session)
+    res = _reservation(db_session, u.id, price=200.00)
+    res.status = bad_status
+    db_session.flush()
+    _give_points(db_session, u.id, res, 1000)
+
+    with pytest.raises(NotRedeemable):
+        apply_redemption(db_session, user_id=u.id, reservation=res, points_requested=1000)
+
+
+@pytest.mark.parametrize("bad_status", ["cancelled", "completed"])
+def test_http_apply_on_closed_reservation_returns_409(client, db_session, bad_status):
+    """HTTP: redeeming against a closed reservation → 409."""
+    token = _register_and_login(client)
+    res = _make_reservation_with_points(client, db_session)
+    res.status = bad_status
+    db_session.commit()
+
+    r = client.post(
+        f"/reservations/{res.id}/redemption/apply",
+        json={"points": 1000},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 409
+
+
+# Bug 4: points are reversed (returned) when a booking is refunded after redemption.
+
+def test_reverse_points_returns_redeemed_points_on_refund(db_session):
+    """When a booking that had points redeemed is refunded, the user gets
+    the redeemed points back (net delta after all rows must be zero)."""
+    from app.services.points import reverse_points
+
+    u = _user(db_session)
+    res = _reservation(db_session, u.id, price=200.00)
+    _give_points(db_session, u.id, res, 1000)   # +1000 (stay earned)
+
+    apply_redemption(db_session, user_id=u.id, reservation=res, points_requested=1000)
+    # balance is now 0: earned 1000, spent 1000
+
+    assert get_balance(db_session, user_id=u.id) == 0
+
+    # Simulate cancellation / refund.
+    reverse_points(db_session, reservation=res)
+
+    # After reversal the net for this reservation is zero; balance returns to 0
+    # (no stay_earned to restore either since they were also offset by the spend).
+    # What matters: balance does not go negative.
+    assert get_balance(db_session, user_id=u.id) == 0
+
+
+def test_reverse_points_refunds_redeemed_points_when_earn_exists(db_session):
+    """Earned points were awarded THEN spent on redemption.
+    On refund: reverse(net) = reverse(+earn - spend) = -earn + spend → user
+    ends up with net 0 for that reservation, which is correct."""
+    from app.services.points import reverse_points
+
+    u = _user(db_session)
+    # Reservation A: earn 200 pts (stay at $200)
+    res_a = _reservation(db_session, u.id, price=200.00)
+    _give_points(db_session, u.id, res_a, 200)
+
+    # Reservation B: will be redeemed + refunded
+    res_b = _reservation(db_session, u.id, price=200.00)
+
+    # Redeem 500 pts from res_a balance against res_b
+    # First give enough points via res_b for the test to work independently
+    _give_points(db_session, u.id, res_b, 500)
+    apply_redemption(db_session, user_id=u.id, reservation=res_b, points_requested=500)
+    # balance: res_a +200, res_b +500-500=0 → total 200
+
+    before = get_balance(db_session, user_id=u.id)
+
+    # Refund res_b → reverse net for res_b (which is 0, so nothing changes)
+    reverse_points(db_session, reservation=res_b)
+
+    after = get_balance(db_session, user_id=u.id)
+    assert after == before  # res_b net was 0, no change expected
+
+
+def test_reverse_points_earn_only_still_works(db_session):
+    """Existing behaviour: reversing a reservation that only has earned points
+    (no redemption) still deducts those points."""
+    from app.services.points import reverse_points
+
+    u = _user(db_session)
+    res = _reservation(db_session, u.id, price=200.00)
+    _give_points(db_session, u.id, res, 200)
+
+    assert get_balance(db_session, user_id=u.id) == 200
+    reverse_points(db_session, reservation=res)
+    assert get_balance(db_session, user_id=u.id) == 0

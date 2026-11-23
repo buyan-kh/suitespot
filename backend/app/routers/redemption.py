@@ -20,7 +20,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies.auth import get_current_user
 from app.models.reservation import Reservation
-from app.services.redemption import MIN_REDEMPTION_POINTS, POINTS_PER_DOLLAR, apply_redemption, redemption_quote
+from app.services.redemption import (
+    MIN_REDEMPTION_POINTS,
+    POINTS_PER_DOLLAR,
+    AlreadyRedeemed,
+    NotRedeemable,
+    apply_redemption,
+    redemption_quote,
+)
 
 router = APIRouter(tags=["redemption"])
 
@@ -110,6 +117,10 @@ def post_redemption_apply(
             reservation=reservation,
             points_requested=body.points,
         )
+    except NotRedeemable as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except AlreadyRedeemed as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     return _quote_to_response(quote)

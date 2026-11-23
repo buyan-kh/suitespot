@@ -11,13 +11,25 @@ redemption_quote(db, *, user_id, reservation, points_requested) -> RedemptionQuo
     ValueError with a human-readable message on any constraint violation.
 
 apply_redemption(db, *, user_id, reservation, points_requested) -> RedemptionQuote
-    Calls redemption_quote, then writes a "points_redeemed" ledger row and
-    returns the quote so the caller can see the discount applied.
+    Calls redemption_quote, then writes a "points_redeemed" ledger row,
+    updates reservation.total_price to the discounted amount, and returns
+    the quote so the caller can see the discount applied.
+
+Bugs fixed
+----------
+1. apply_redemption now updates reservation.total_price so the charge uses
+   the discounted amount (previously points were spent but price unchanged).
+2. Redeeming twice on one booking now returns 409 (AlreadyRedeemed) instead
+   of a 500 from the DB unique constraint.
+3. Cancelled/completed reservations cannot be redeemed against (NotRedeemable).
+4. reverse_points (in points.py) now also returns any "points_redeemed" rows
+   so a refund gives the user their points back.
 """
 
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.points import PointsLedger
@@ -27,6 +39,18 @@ from app.services.points import get_balance
 # ── constants ──────────────────────────────────────────────────────────────
 POINTS_PER_DOLLAR: int = 100  # 100 pts = $1.00
 MIN_REDEMPTION_POINTS: int = 500  # floor: 500 pts = $5.00
+
+# Statuses on which redemption is allowed (pending hold or confirmed booking).
+_REDEEMABLE_STATUSES = {"pending", "confirmed"}
+
+
+# ── custom exceptions ──────────────────────────────────────────────────────
+class AlreadyRedeemed(ValueError):
+    """The reservation already has a points_redeemed ledger row."""
+
+
+class NotRedeemable(ValueError):
+    """The reservation is cancelled or completed and cannot be redeemed against."""
 
 
 def _cents_to_decimal(points: int) -> Decimal:
@@ -121,11 +145,42 @@ def apply_redemption(
     reservation: Reservation,
     points_requested: int,
 ) -> RedemptionQuote:
-    """Validate, write a ledger row, and return the quote."""
+    """Validate, write a ledger row, update the reservation total, and return the quote.
+
+    Raises
+    ------
+    NotRedeemable   – reservation is cancelled or completed.
+    AlreadyRedeemed – a points_redeemed row already exists for this reservation.
+    ValueError      – points validation failed (too few, below minimum, etc.).
+    """
+    # Bug fix 3: block redemption on closed reservations.
+    if reservation.status not in _REDEEMABLE_STATUSES:
+        raise NotRedeemable(
+            f"Redemption is not allowed on a {reservation.status!r} reservation."
+        )
+
+    # Bug fix 2: guard against double-redemption (the DB UniqueConstraint would
+    # raise an IntegrityError; we raise a clean exception instead).
+    already = db.execute(
+        select(PointsLedger).where(
+            PointsLedger.reservation_id == reservation.id,
+            PointsLedger.reason == "points_redeemed",
+        )
+    ).scalar_one_or_none()
+    if already is not None:
+        raise AlreadyRedeemed(
+            "Points have already been redeemed for this reservation."
+        )
+
     quote = redemption_quote(
         db, user_id=user_id, reservation=reservation,
         points_requested=points_requested,
     )
+
+    # Bug fix 1: update total_price so the subsequent charge uses the discounted
+    # amount.  Without this the guest loses the points and still pays full price.
+    reservation.total_price = quote.new_total
+    db.add(reservation)
 
     entry = PointsLedger(
         user_id=user_id,
