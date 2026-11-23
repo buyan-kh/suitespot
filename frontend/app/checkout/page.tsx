@@ -62,7 +62,6 @@ function computeSecondsLeft(expiresAt: string | null): number {
 }
 
 function CheckoutContent({ reservationId }: { reservationId: string }) {
-
   const [reservation, setReservation] = useState<ReservationDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -95,7 +94,6 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
 
   useEffect(() => {
     let cancelled = false;
-
     async function loadReservation() {
       try {
         const res = await authFetch('/me/reservations');
@@ -109,7 +107,6 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
           ...(data.cancelled || []),
         ];
         const match = all.find((r) => r.id === reservationId);
-
         if (!match) {
           setLoadError('This reservation hold could not be found or has already expired.');
           return;
@@ -123,7 +120,6 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
 
         const nights = Math.max(1, match.nights);
         const nightlyRate = Math.round((match.total_price / nights) * 100) / 100;
-
         setReservation({
           id: match.id,
           hotelName: match.hotel.name,
@@ -145,7 +141,6 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
         if (!cancelled) setLoading(false);
       }
     }
-
     loadReservation();
     return () => {
       cancelled = true;
@@ -184,7 +179,6 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
   const validate = (): boolean => {
     const next: Record<string, string> = {};
     const digitsOnly = cardNumber.replace(/\s/g, '');
-
     if (!fullName.trim()) next.fullName = 'Full name is required.';
     if (!email.trim() || !email.includes('@')) next.email = 'Valid email required for confirmation.';
     if (!cardholderName.trim()) next.cardholderName = 'Enter name on card.';
@@ -192,7 +186,6 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
     if (!/^(0[1-9]|1[0-2])\/\d{2}$/.test(expiry)) next.expiry = 'MM/YY required.';
     if (cvc.length < 3) next.cvc = 'Enter CVC.';
     if (!postalCode.trim()) next.postalCode = 'Enter ZIP code.';
-
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -200,10 +193,8 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
   const handlePaymentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reservation || !validate()) return;
-
     setPaymentError('');
     setIsProcessing(true);
-
     try {
       // Step 1: Verify displayed total matches backend before charging (Task 3.2.2)
       const verifyRes = await authFetch(
@@ -214,7 +205,6 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
           body: JSON.stringify({ displayed_total: reservation.totalPrice }),
         }
       );
-
       if (!verifyRes.ok) {
         const vBody = await verifyRes.json().catch(() => null);
         const detail = Array.isArray(vBody?.detail) ? vBody.detail[0] : null;
@@ -238,28 +228,24 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
         return;
       }
 
-      // Step 2: Submit charge to payment endpoint (Task 3.1.2 / 3.1.3)
-      const digitsOnly = cardNumber.replace(/\s/g, '');
+      // Step 2: Confirm payment with backend (Task 3.1.2 / 3.1.3)
+      const transactionId =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? `sandbox_${crypto.randomUUID()}`
+          : `sandbox_${reservation.id}_${Date.now()}`;
+
       const chargeRes = await authFetch(
-        `/reservations/${encodeURIComponent(reservation.id)}/pay`,
+        `/reservations/${encodeURIComponent(reservation.id)}/confirm`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             amount: reservation.totalPrice,
             payment_method: 'card',
-            card_last4: digitsOnly.slice(-4),
-            cardholder_name: cardholderName.trim(),
-            expiry,
-            postal_code: postalCode.trim(),
-            guest_name: fullName.trim(),
-            guest_email: email.trim(),
-            guest_phone: phone.trim() || null,
-            special_requests: specialRequests.trim() || null,
+            transaction_id: transactionId,
           }),
         }
       );
-
       if (!chargeRes.ok) {
         const cBody = await chargeRes.json().catch(() => null);
         const detail = cBody?.detail;
@@ -268,6 +254,8 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
             ? detail[0].msg
             : typeof detail === 'string'
             ? detail
+            : typeof detail?.message === 'string'
+            ? detail.message
             : 'Card payment was declined or could not be processed. Please check your card and retry.';
         setPaymentError(msg);
         return;
@@ -317,7 +305,6 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
             <CheckCircle2 className="w-10 h-10 text-emerald-600" />
           </div>
         </div>
-
         <div className="space-y-1">
           <h1 className="text-3xl font-bold text-ink">Booking Confirmed!</h1>
           <p className="text-sm text-muted">
@@ -330,7 +317,6 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
             )}
           </p>
         </div>
-
         <div className="border border-line rounded-card bg-surface p-6 text-left space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-line">
             <div>
@@ -346,12 +332,10 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
               {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
-
           <div className="space-y-1 text-sm pb-3 border-b border-line">
             <span className="text-xs text-muted block">{reservation.hotelName}</span>
             <span className="font-semibold text-ink capitalize">{reservation.roomTitle}</span>
           </div>
-
           {fullName && (
             <div className="space-y-1 text-sm pb-3 border-b border-line">
               <span className="text-xs text-muted block">Guest</span>
@@ -360,7 +344,6 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
               </span>
             </div>
           )}
-
           <div className="grid grid-cols-2 gap-4 text-sm pb-3 border-b border-line">
             <div>
               <span className="text-xs text-muted block">Check-in</span>
@@ -371,13 +354,11 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
               <span className="font-semibold text-ink">{reservation.checkOut}</span>
             </div>
           </div>
-
           <div className="flex justify-between items-center text-sm pt-1">
             <span className="text-muted">Total Paid</span>
             <span className="text-xl font-bold text-ink">${reservation.totalPrice.toFixed(2)}</span>
           </div>
         </div>
-
         <div className="flex flex-wrap justify-center gap-3">
           <Link
             href="/bookings"
@@ -406,7 +387,6 @@ function CheckoutContent({ reservationId }: { reservationId: string }) {
             Provide guest information and complete payment to confirm your booking
           </p>
         </div>
-
         {/* 15-Minute Hold Indicator */}
         <div
           className={`inline-flex items-center gap-2 border px-3.5 py-1.5 rounded-full text-xs font-semibold self-start sm:self-auto ${

@@ -7,17 +7,15 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import RequireAuth from "@/components/auth/RequireAuth";
 import BookingCard, { type BookingCardData } from "@/components/bookings/BookingCard";
 import CancelDialog from "@/components/booking/CancelDialog";
+import ModifyDialog from "@/components/booking/ModifyDialog";
 import { Button } from "@/components/ui/Button";
 import { authFetch } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 // Task 4.1.2 - My Bookings page with Upcoming / Past / Cancelled tabs.
 // Data: GET /me/reservations (4.1.1). The open tab is kept in the URL (?tab=past).
-// Task 4.3.2 - after a cancel or change, show a confirmation here and highlight the booking.
-// Other flows (e.g. the change flow, 4.3.1) can send the user back with:
-//   /bookings?done=changed&id=<reservationId>    or    /bookings?done=cancelled&id=<reservationId>
+// Task 4.3.1 / 4.3.2 - after a cancel or change, show a confirmation here and highlight the booking.
 // Task 2.4.3 - /bookings?highlight=<reservationId> outlines and scrolls to one booking (no banner).
-
 type Tab = "upcoming" | "past" | "cancelled";
 type Data = Record<Tab, BookingCardData[]>;
 
@@ -48,6 +46,7 @@ function MyBookings() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState("");
   const [cancelling, setCancelling] = useState<BookingCardData | null>(null);
+  const [modifying, setModifying] = useState<BookingCardData | null>(null);
   const [localDone, setLocalDone] = useState<Done | null>(null);
 
   const doneParam = params.get("done");
@@ -55,8 +54,11 @@ function MyBookings() {
   const fromUrl: Done | null =
     (doneParam === "cancelled" || doneParam === "changed") && doneId ? { action: doneParam, id: doneId } : null;
   const done = localDone ?? fromUrl;
-  const doneBooking = done && data ? [...data.upcoming, ...data.past, ...data.cancelled].find((b) => b.id === done.id) : undefined;
+
+  const doneBooking =
+    done && data ? [...data.upcoming, ...data.past, ...data.cancelled].find((b) => b.id === done.id) : undefined;
   const doneName = done?.hotelName ?? doneBooking?.hotel.name;
+
   const highlightId = params.get("highlight");
   const focusId = done?.id ?? highlightId;
   const focusTab: Tab | null =
@@ -233,7 +235,13 @@ function MyBookings() {
           </div>
         ) : (
           list.map((b) => (
-            <BookingCard key={b.id} booking={b} onCancel={setCancelling} highlighted={focusId === b.id} />
+            <BookingCard
+              key={b.id}
+              booking={b}
+              onCancel={setCancelling}
+              onModify={setModifying}
+              highlighted={focusId === b.id}
+            />
           ))
         )}
       </section>
@@ -249,6 +257,16 @@ function MyBookings() {
         onClose={() => setCancelling(null)}
         onCancelled={(r) => {
           setLocalDone({ action: "cancelled", id: r.id, hotelName: cancelling?.hotel.name });
+          reload();
+        }}
+      />
+
+      <ModifyDialog
+        open={!!modifying}
+        booking={modifying}
+        onClose={() => setModifying(null)}
+        onModified={(id, hotelName) => {
+          setLocalDone({ action: "changed", id, hotelName });
           reload();
         }}
       />

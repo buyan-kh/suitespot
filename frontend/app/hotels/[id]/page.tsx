@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { MapPin, Star } from "lucide-react";
@@ -8,6 +8,7 @@ import PhotoGallery, { type GalleryImage } from "@/components/hotel/PhotoGallery
 import AmenityList from "@/components/hotel/AmenityList";
 import BookingWidget, { type SelectedRoom } from "@/components/hotel/BookingWidget";
 import CancellationPolicy from "@/components/policy/CancellationPolicy";
+import { getAccessToken, getRefreshToken } from "@/lib/auth";
 
 type HotelDetail = {
   id: string;
@@ -22,19 +23,45 @@ type HotelDetail = {
   rooms: SelectedRoom[];
 };
 
+type MemberRateRoom = {
+  room_id: string;
+  price_per_night: number;
+  member_price_per_night: number;
+  savings_per_night: number;
+  savings_percent: number;
+};
+
+type MemberRatesData = {
+  hotel_id: string;
+  best_savings_percent: number | null;
+  rooms: MemberRateRoom[];
+};
+
 const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+
+const subscribeAuth = (cb: () => void) => {
+  window.addEventListener("suitespot-auth-change", cb);
+  window.addEventListener("storage", cb);
+  return () => {
+    window.removeEventListener("suitespot-auth-change", cb);
+    window.removeEventListener("storage", cb);
+  };
+};
+const getIsLoggedIn = () => !!(getAccessToken() || getRefreshToken());
 
 function Details() {
   const route = useParams();
   const params = useSearchParams();
   const id = String(route.id);
 
+  const isLoggedIn = useSyncExternalStore(subscribeAuth, getIsLoggedIn, () => true);
+
   const [hotel, setHotel] = useState<HotelDetail | null>(null);
   const [gallery, setGallery] = useState<GalleryImage[]>([]);
+  const [memberRates, setMemberRates] = useState<MemberRatesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState("");
-
   const [checkIn, setCheckIn] = useState(params.get("checkIn") || "");
   const [checkOut, setCheckOut] = useState(params.get("checkOut") || "");
   const [adults, setAdults] = useState(Math.max(1, Number(params.get("adults") || 1)));
@@ -56,31 +83,40 @@ function Details() {
     return () => abort.abort();
   }, [id]);
 
+  // Fetch member rates once per hotel (Task 1.8.2)
+  useEffect(() => {
+    const abort = new AbortController();
+    fetch(`${API}/hotels/${encodeURIComponent(id)}/member-rates`, { signal: abort.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: MemberRatesData | null) => {
+        if (!abort.signal.aborted && data) {
+          setMemberRates(data);
+        }
+      })
+      .catch(() => {});
+    return () => abort.abort();
+  }, [id]);
+
   // Fetch hotel details & live room availability when dates/guests change
   useEffect(() => {
     const abort = new AbortController();
-
     async function fetchHotel() {
       setLoading(true);
       setError("");
-
       try {
         const query = new URLSearchParams({ guests: String(totalGuests) });
         if (checkIn && checkOut && checkOut > checkIn) {
           query.set("checkIn", checkIn);
           query.set("checkOut", checkOut);
         }
-
         const res = await fetch(`${API}/hotels/${encodeURIComponent(id)}?${query}`, {
           signal: abort.signal,
         });
-
         if (!res.ok) {
           throw new Error(res.status === 404 ? "Hotel not found." : `Hotel lookup failed (HTTP ${res.status})`);
         }
         const data = (await res.json()) as HotelDetail;
         if (abort.signal.aborted) return;
-
         setHotel(data);
         setSelectedId((old) =>
           data.rooms.some((r) => r.id === old && r.available)
@@ -95,12 +131,15 @@ function Details() {
         if (!abort.signal.aborted) setLoading(false);
       }
     }
-
     fetchHotel();
     return () => abort.abort();
   }, [id, totalGuests, checkIn, checkOut]);
 
   const selectedRoom = hotel?.rooms.find((r) => r.id === selectedId) ?? null;
+  const memberRateByRoom = new Map(
+    (memberRates?.rooms ?? []).map((r) => [r.room_id, r])
+  );
+
   const nights =
     checkIn && checkOut && checkOut > checkIn
       ? Math.round(
@@ -190,12 +229,40 @@ function Details() {
                   </span>
                 </div>
 
+                {!isLoggedIn && memberRates?.best_savings_percent ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-accent/30 bg-accent/5 p-4">
+                    <div>
+                      <p className="text-sm font-bold text-ink">
+                        Members save up to {memberRates.best_savings_percent}% at this hotel
+                      </p>
+                      <p className="text-xs text-muted mt-0.5">
+                        Sign up for a free LikeHome account to unlock lower member rates.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Link
+                        href="/register"
+                        className="inline-flex h-9 items-center rounded-control bg-accent px-3.5 text-xs font-bold text-white hover:bg-accent-hover transition-colors"
+                      >
+                        Create free account
+                      </Link>
+                      <Link
+                        href={`/login?next=${encodeURIComponent(`/hotels/${hotel.id}`)}`}
+                        className="inline-flex h-9 items-center rounded-control border border-line-strong bg-surface px-3.5 text-xs font-semibold text-ink hover:bg-surface-muted transition-colors"
+                      >
+                        Sign in
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
+
                 {hotel.rooms.length === 0 ? (
                   <p className="text-sm text-muted">No rooms listed for this hotel.</p>
                 ) : (
                   <div className="space-y-3">
                     {hotel.rooms.map((room) => {
                       const isSelected = room.id === selectedId;
+                      const mr = memberRateByRoom.get(room.id);
                       return (
                         <label
                           key={room.id}
@@ -225,9 +292,13 @@ function Details() {
                               </p>
                             </div>
                           </div>
-
                           <div className="text-right shrink-0">
                             <p className="font-bold text-ink">${room.price_per_night} / night</p>
+                            {mr && (
+                              <p className="text-xs font-semibold text-accent mt-0.5">
+                                Member rate: ${mr.member_price_per_night} / night (Save {mr.savings_percent}%)
+                              </p>
+                            )}
                             <span
                               className={`inline-block mt-1 text-xs font-semibold ${
                                 room.available ? "text-success" : "text-danger"

@@ -5,9 +5,9 @@ import { Button } from "@/components/ui/Button";
 import StatusBadge, { type BookingStatus } from "@/components/bookings/StatusBadge";
 
 // Task 4.2.1 - one booking on the My Bookings page.
+// Task 4.3.1 - Modify + Cancel action buttons.
 // Task 4.3.2 - `highlighted` outlines the booking that was just changed or cancelled.
 // Data: a card from GET /me/reservations (4.1.1).
-
 export type BookingCardData = {
   id: string;
   status: BookingStatus;
@@ -41,10 +41,12 @@ const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 export default function BookingCard({
   booking,
   onCancel,
+  onModify,
   highlighted = false,
 }: {
   booking: BookingCardData;
   onCancel?: (booking: BookingCardData) => void;
+  onModify?: (booking: BookingCardData) => void;
   highlighted?: boolean;
 }) {
   const { hotel, room, status } = booking;
@@ -116,6 +118,11 @@ export default function BookingCard({
               >
                 Complete payment
               </Link>
+            )}
+            {(status === "confirmed" || status === "awaiting_payment") && onModify && (
+              <Button variant="outline" onClick={() => onModify(booking)}>
+                Modify
+              </Button>
             )}
             {status === "confirmed" && onCancel && (
               <Button variant="destructive" onClick={() => onCancel(booking)}>
