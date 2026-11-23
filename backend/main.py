@@ -9,7 +9,6 @@ from app.amenities import router as amenities
 from app.images import router as images
 from app.images.resize import SIZED_DIR
 from app.requote import router as requote
-from app.routers import auth_tokens, cancel, health, hotels, login, logout, register, reservations, search, verify_total
 from app.my_reservations import router as my_reservations
 from app.member_rates import router as member_rates
 from app.routers import auth_tokens, cancel, health, hotels, login, logout, modify, register, reservations, search, verify_total
@@ -45,6 +44,7 @@ app.include_router(register.router)
 app.include_router(login.router)
 app.include_router(hotels.router)
 app.include_router(reservations.router)
+app.include_router(payment.router)
 app.include_router(logout.router)
 app.include_router(cancel.router)
 app.include_router(verify_total.router)
