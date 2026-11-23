@@ -40,3 +40,4 @@ class Reservation(Base):
     user = relationship("User", back_populates="reservations")
     room = relationship("Room", back_populates="reservations")
     payments = relationship("Payment", back_populates="reservation")
+    points_ledger = relationship("PointsLedger", back_populates="reservation")
