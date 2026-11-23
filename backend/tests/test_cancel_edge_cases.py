@@ -107,7 +107,9 @@ def test_late_copy_of_the_original_charge_does_not_revive_a_cancelled_booking(
     assert status_of(db_session, hold) == "cancelled"
     assert is_room_available(db_session, room.id, IN, OUT) is True
     payments = db_session.query(Payment).all()
-    assert len(payments) == 1  # the original charge, not a second one
+    assert len(payments) == 2  # the original charge plus the policy refund
+    assert sorted(p.status for p in payments) == ["succeeded", "succeeded"]
+    assert sorted(float(p.amount) for p in payments) == [-300.0, 300.0]
 
 
 # The check-in-day boundary, with "today" pinned so the test can't drift.

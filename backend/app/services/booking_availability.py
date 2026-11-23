@@ -6,8 +6,10 @@ from sqlalchemy.orm import Session
 from app.models.hotel import Hotel
 from app.models.reservation import Reservation
 from app.models.room import Room
+from app.models.user import User
 from app.services.availability import FREE_STATUSES, is_room_available
 from app.services.pricing import stay_total
+from app.services.stay_overlap import StayConflict, find_overlapping_stay
 
 HOLD_MINUTES = 15
 STATUS_PENDING = "pending"
@@ -31,6 +33,17 @@ class InvalidStay(BookingError):
 
 class RoomUnavailable(BookingError):
     pass
+
+
+class OverlappingStay(BookingError):
+    """The guest already holds a stay at a different hotel on some of these nights."""
+
+    def __init__(self, conflict: StayConflict):
+        super().__init__(
+            f"You already have a stay at {conflict.hotel_name} "
+            f"from {conflict.check_in} to {conflict.check_out}."
+        )
+        self.conflict = conflict
 
 
 def _utc(value: datetime) -> datetime:
@@ -102,22 +115,34 @@ def place_hold(
 
     release_expired_holds(db, now=now)
 
+    # The room lock below only serializes one room. Lock the guest too, so two
+    # tabs booking different hotels at the same moment can't both pass the
+    # overlap check. Different guests never wait on each other.
+    db.execute(select(User.id).where(User.id == user_id).with_for_update())
+
     # FOR UPDATE locks the room row on PostgreSQL, so two guests submitting at
     # the same moment are checked one after the other. SQLite ignores it.
     room = db.execute(
         select(Room).where(Room.id == room_id).with_for_update()
     ).scalar_one_or_none()
-    
+
     hotel = db.get(Hotel, room.hotel_id) if room is not None else None
     if room is None or hotel is None or not hotel.is_active:
         db.rollback()  # release the room lock
         raise RoomNotFound(f"Room {room_id} does not exist.")
-        
+
     if num_guests > room.max_guests:
         raise InvalidStay(
             "num_guests",
             f"This room sleeps at most {room.max_guests} guests.",
         )
+
+    conflict = find_overlapping_stay(
+        db, user_id=user_id, hotel_id=room.hotel_id, check_in=check_in, check_out=check_out
+    )
+    if conflict is not None:
+        db.rollback()  # release the locks
+        raise OverlappingStay(conflict)
 
     if not is_room_available(db, room.id, check_in, check_out):
         db.rollback()  # release the room lock
