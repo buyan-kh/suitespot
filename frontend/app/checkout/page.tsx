@@ -5,6 +5,8 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import RequireAuth from '@/components/auth/RequireAuth';
 import PriceBreakdown from '@/components/checkout/PriceBreakdown';
+import CancellationPolicy from '@/components/policy/CancellationPolicy';
+import { authFetch } from '@/lib/auth';
 import {
   ShieldCheck,
   Lock,
@@ -21,29 +23,53 @@ import {
   Phone,
 } from 'lucide-react';
 
+type ReservationCard = {
+  id: string;
+  status: string;
+  hotel: {
+    id: string;
+    name: string;
+    city: string;
+    image?: { url: string; alt: string; sizes?: { medium?: string } } | null;
+  };
+  room: { id: string; room_type: string; room_number: string };
+  check_in: string;
+  check_out: string;
+  nights: number;
+  num_guests: number;
+  total_price: number;
+  amount_paid: number;
+  hold_expires_at: string | null;
+};
+
 type ReservationDetail = {
   id: string;
   hotelName: string;
   roomTitle: string;
+  imageUrl?: string;
   checkIn: string;
   checkOut: string;
   nights: number;
   nightlyRate: number;
-  taxes: number;
   totalPrice: number;
+  holdExpiresAt: string | null;
 };
 
-function CheckoutContent() {
-  const searchParams = useSearchParams();
-  const reservationId = searchParams.get('reservationId') || '';
+function computeSecondsLeft(expiresAt: string | null): number {
+  if (!expiresAt) return 15 * 60;
+  const diff = Math.floor((Date.parse(expiresAt) - Date.now()) / 1000);
+  return Math.max(0, diff);
+}
+
+function CheckoutContent({ reservationId }: { reservationId: string }) {
 
   const [reservation, setReservation] = useState<ReservationDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [paymentError, setPaymentError] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPaid, setIsPaid] = useState(false);
   const [copied, setCopied] = useState(false);
-
-  // 15-minute hold timer (in seconds)
   const [timeLeft, setTimeLeft] = useState(15 * 60);
 
   // Guest Details State
@@ -68,21 +94,63 @@ function CheckoutContent() {
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setReservation({
-      id: reservationId || 'HOLD-849204',
-      hotelName: 'SuiteSpot Downtown San Jose',
-      roomTitle: 'Deluxe King Room',
-      checkIn: '2026-11-21',
-      checkOut: '2026-11-24',
-      nights: 3,
-      nightlyRate: 189,
-      taxes: 45,
-      totalPrice: 189 * 3 + 45,
-    });
-    setLoading(false);
+    let cancelled = false;
+
+    async function loadReservation() {
+      try {
+        const res = await authFetch('/me/reservations');
+        if (!res.ok) throw new Error(`Could not load reservation (HTTP ${res.status}).`);
+        const data = await res.json();
+        if (cancelled) return;
+
+        const all: ReservationCard[] = [
+          ...(data.upcoming || []),
+          ...(data.past || []),
+          ...(data.cancelled || []),
+        ];
+        const match = all.find((r) => r.id === reservationId);
+
+        if (!match) {
+          setLoadError('This reservation hold could not be found or has already expired.');
+          return;
+        }
+        if (match.status === 'confirmed') {
+          setIsPaid(true);
+        } else if (match.status === 'cancelled' || match.status === 'completed') {
+          setLoadError(`This reservation is ${match.status} and cannot be paid.`);
+          return;
+        }
+
+        const nights = Math.max(1, match.nights);
+        const nightlyRate = Math.round((match.total_price / nights) * 100) / 100;
+
+        setReservation({
+          id: match.id,
+          hotelName: match.hotel.name,
+          roomTitle: `${match.room.room_type} · Room ${match.room.room_number}`,
+          imageUrl: match.hotel.image?.sizes?.medium || match.hotel.image?.url,
+          checkIn: match.check_in,
+          checkOut: match.check_out,
+          nights,
+          nightlyRate,
+          totalPrice: match.total_price,
+          holdExpiresAt: match.hold_expires_at,
+        });
+        setTimeLeft(computeSecondsLeft(match.hold_expires_at));
+      } catch (err) {
+        if (!cancelled) {
+          setLoadError(err instanceof Error ? err.message : 'Failed to load reservation.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadReservation();
+    return () => {
+      cancelled = true;
+    };
   }, [reservationId]);
-  
 
   const formatTime = (secs: number) => {
     const mins = Math.floor(secs / 60);
@@ -131,16 +199,91 @@ function CheckoutContent() {
 
   const handlePaymentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validate()) return;
+    if (!reservation || !validate()) return;
 
+    setPaymentError('');
     setIsProcessing(true);
-    await new Promise((resolve) => setTimeout(resolve, 900));
-    setIsProcessing(false);
-    setIsPaid(true);
+
+    try {
+      // Step 1: Verify displayed total matches backend before charging (Task 3.2.2)
+      const verifyRes = await authFetch(
+        `/reservations/${encodeURIComponent(reservation.id)}/verify-total`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ displayed_total: reservation.totalPrice }),
+        }
+      );
+
+      if (!verifyRes.ok) {
+        const vBody = await verifyRes.json().catch(() => null);
+        const detail = Array.isArray(vBody?.detail) ? vBody.detail[0] : null;
+        if (detail?.type === 'total_mismatch' && detail?.ctx?.expected_total) {
+          const updatedTotal = Number(detail.ctx.expected_total);
+          setReservation((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  totalPrice: updatedTotal,
+                  nightlyRate: Math.round((updatedTotal / prev.nights) * 100) / 100,
+                }
+              : prev
+          );
+          setPaymentError(
+            `The stay total updated to $${updatedTotal.toFixed(2)}. Review the new total and click Pay again.`
+          );
+          return;
+        }
+        setPaymentError(detail?.msg || 'This reservation can no longer be paid.');
+        return;
+      }
+
+      // Step 2: Submit charge to payment endpoint (Task 3.1.2 / 3.1.3)
+      const digitsOnly = cardNumber.replace(/\s/g, '');
+      const chargeRes = await authFetch(
+        `/reservations/${encodeURIComponent(reservation.id)}/pay`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: reservation.totalPrice,
+            payment_method: 'card',
+            card_last4: digitsOnly.slice(-4),
+            cardholder_name: cardholderName.trim(),
+            expiry,
+            postal_code: postalCode.trim(),
+            guest_name: fullName.trim(),
+            guest_email: email.trim(),
+            guest_phone: phone.trim() || null,
+            special_requests: specialRequests.trim() || null,
+          }),
+        }
+      );
+
+      if (!chargeRes.ok) {
+        const cBody = await chargeRes.json().catch(() => null);
+        const detail = cBody?.detail;
+        const msg =
+          Array.isArray(detail) && detail[0]?.msg
+            ? detail[0].msg
+            : typeof detail === 'string'
+            ? detail
+            : 'Card payment was declined or could not be processed. Please check your card and retry.';
+        setPaymentError(msg);
+        return;
+      }
+
+      setIsPaid(true);
+    } catch {
+      setPaymentError("Can't reach the payment server right now. Please try again.");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleCopyCode = () => {
-    navigator.clipboard.writeText(reservation?.id || 'HOLD-849204');
+    if (!reservation) return;
+    navigator.clipboard.writeText(reservation.id);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -149,8 +292,24 @@ function CheckoutContent() {
     return <div className="p-12 text-center text-muted font-medium">Loading checkout details…</div>;
   }
 
+  if (loadError || !reservation) {
+    return (
+      <main className="max-w-xl mx-auto px-4 py-16 text-center space-y-4">
+        <p role="alert" className="rounded-control bg-danger-soft border border-danger/20 p-4 text-sm text-danger">
+          {loadError || 'Reservation not found.'}
+        </p>
+        <Link
+          href="/hotels"
+          className="inline-flex items-center gap-2 bg-ink text-white font-bold text-sm px-5 py-2.5 rounded-control"
+        >
+          Browse hotels
+        </Link>
+      </main>
+    );
+  }
+
   // Confirmation View
-  if (isPaid && reservation) {
+  if (isPaid) {
     return (
       <main className="max-w-2xl mx-auto px-4 py-16 text-center space-y-6">
         <div className="flex justify-center">
@@ -162,7 +321,13 @@ function CheckoutContent() {
         <div className="space-y-1">
           <h1 className="text-3xl font-bold text-ink">Booking Confirmed!</h1>
           <p className="text-sm text-muted">
-            Confirmation sent to <span className="text-ink font-semibold">{email}</span>.
+            {email ? (
+              <>
+                Confirmation sent to <span className="text-ink font-semibold">{email}</span>.
+              </>
+            ) : (
+              'Your stay has been confirmed.'
+            )}
           </p>
         </div>
 
@@ -173,6 +338,7 @@ function CheckoutContent() {
               <p className="text-lg font-bold text-ink tracking-wide">{reservation.id}</p>
             </div>
             <button
+              type="button"
               onClick={handleCopyCode}
               className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-control border border-line bg-surface hover:bg-surface-muted transition-colors cursor-pointer"
             >
@@ -182,9 +348,18 @@ function CheckoutContent() {
           </div>
 
           <div className="space-y-1 text-sm pb-3 border-b border-line">
-            <span className="text-xs text-muted block">Guest</span>
-            <span className="font-semibold text-ink">{fullName} ({phone})</span>
+            <span className="text-xs text-muted block">{reservation.hotelName}</span>
+            <span className="font-semibold text-ink capitalize">{reservation.roomTitle}</span>
           </div>
+
+          {fullName && (
+            <div className="space-y-1 text-sm pb-3 border-b border-line">
+              <span className="text-xs text-muted block">Guest</span>
+              <span className="font-semibold text-ink">
+                {fullName} {phone ? `(${phone})` : ''}
+              </span>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4 text-sm pb-3 border-b border-line">
             <div>
@@ -203,12 +378,20 @@ function CheckoutContent() {
           </div>
         </div>
 
-        <Link
-          href="/hotels"
-          className="inline-flex items-center gap-2 bg-ink hover:opacity-90 text-white font-bold text-sm px-6 py-3 rounded-control transition-all"
-        >
-          Explore More Stays <ArrowRight className="w-4 h-4" />
-        </Link>
+        <div className="flex flex-wrap justify-center gap-3">
+          <Link
+            href="/bookings"
+            className="inline-flex items-center gap-2 bg-ink hover:opacity-90 text-white font-bold text-sm px-6 py-3 rounded-control transition-all"
+          >
+            View My Bookings <ArrowRight className="w-4 h-4" />
+          </Link>
+          <Link
+            href="/hotels"
+            className="inline-flex items-center gap-2 border border-line bg-surface hover:bg-surface-muted text-ink font-bold text-sm px-6 py-3 rounded-control transition-all"
+          >
+            Explore More Stays
+          </Link>
+        </div>
       </main>
     );
   }
@@ -218,24 +401,38 @@ function CheckoutContent() {
     <main className="max-w-6xl mx-auto px-4 sm:px-8 py-10 space-y-8 text-ink">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-line pb-6">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Confirm & Pay</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Confirm &amp; Pay</h1>
           <p className="text-xs text-muted font-medium mt-1">
             Provide guest information and complete payment to confirm your booking
           </p>
         </div>
 
         {/* 15-Minute Hold Indicator */}
-        <div className="inline-flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-900 px-3.5 py-1.5 rounded-full text-xs font-semibold self-start sm:self-auto">
-          <Clock className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
-          <span>Hold reserved for {formatTime(timeLeft)}</span>
+        <div
+          className={`inline-flex items-center gap-2 border px-3.5 py-1.5 rounded-full text-xs font-semibold self-start sm:self-auto ${
+            timeLeft > 0
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : 'bg-danger-soft border-danger/20 text-danger'
+          }`}
+        >
+          <Clock className="w-3.5 h-3.5 animate-pulse" />
+          <span>{timeLeft > 0 ? `Hold reserved for ${formatTime(timeLeft)}` : 'Hold expired'}</span>
         </div>
       </div>
+
+      {paymentError && (
+        <div
+          role="alert"
+          className="p-4 text-sm text-danger bg-danger-soft border border-danger/20 rounded-control font-medium"
+        >
+          {paymentError}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Left Column: Guest & Payment Info (7 Cols) */}
         <div className="lg:col-span-7 space-y-6">
           <form onSubmit={handlePaymentSubmit} autoComplete="off" className="space-y-6">
-            
             {/* 1. Guest Information Card */}
             <div className="bg-surface border border-line rounded-card p-6 space-y-5">
               <div className="flex items-center justify-between border-b border-line pb-4">
@@ -247,7 +444,6 @@ function CheckoutContent() {
               </div>
 
               <div className="space-y-4">
-                {/* Full Name */}
                 <div className="space-y-1.5">
                   <label htmlFor="fullName" className="text-xs font-bold text-muted uppercase tracking-wider">
                     Full Name
@@ -266,7 +462,6 @@ function CheckoutContent() {
                   {errors.fullName && <p className="text-xs text-danger font-medium">{errors.fullName}</p>}
                 </div>
 
-                {/* Email & Phone Grid */}
                 <div className="grid sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label htmlFor="email" className="text-xs font-bold text-muted uppercase tracking-wider">
@@ -307,7 +502,6 @@ function CheckoutContent() {
                   </div>
                 </div>
 
-                {/* Special Requests */}
                 <div className="space-y-1.5">
                   <label htmlFor="specialRequests" className="text-xs font-bold text-muted uppercase tracking-wider">
                     Special Requests <span className="text-[10px] lowercase text-muted font-normal">(optional)</span>
@@ -337,32 +531,30 @@ function CheckoutContent() {
                 </div>
               </div>
 
-              {/* Name on Card */}
               <div className="space-y-1.5">
-                <label htmlFor="cardholderName" className="text-xs font-bold text-muted uppercase tracking-wider">
+                <label htmlFor="billingName" className="text-xs font-bold text-muted uppercase tracking-wider">
                   Cardholder Name
                 </label>
-                  <input
-                    id="billingName"
-                    name="billingName"
-                    autoComplete="off"
-                    type="text"
-                    value={cardholderName}
-                    onChange={(e) => {
-                     setCardholderName(e.target.value);
-                      if (errors.cardholderName) setErrors((prev) => ({ ...prev, cardholderName: '' }));
-                    }}
-                    placeholder="First Last"
-                    className="w-full px-3.5 py-2.5 rounded-control border border-line bg-canvas text-sm text-ink focus:outline-none focus:border-ink transition-colors"
-                  />
+                <input
+                  id="billingName"
+                  name="billingName"
+                  autoComplete="off"
+                  type="text"
+                  value={cardholderName}
+                  onChange={(e) => {
+                    setCardholderName(e.target.value);
+                    if (errors.cardholderName) setErrors((prev) => ({ ...prev, cardholderName: '' }));
+                  }}
+                  placeholder="First Last"
+                  className="w-full px-3.5 py-2.5 rounded-control border border-line bg-canvas text-sm text-ink focus:outline-none focus:border-ink transition-colors"
+                />
                 {errors.cardholderName && (
                   <p className="text-xs text-danger font-medium">{errors.cardholderName}</p>
                 )}
               </div>
 
-              {/* Card Number */}
               <div className="space-y-1.5">
-                <label htmlFor="cardNumber" className="text-xs font-bold text-muted uppercase tracking-wider">
+                <label htmlFor="accNum" className="text-xs font-bold text-muted uppercase tracking-wider">
                   Card Number
                 </label>
                 <div className="relative">
@@ -385,7 +577,6 @@ function CheckoutContent() {
                 )}
               </div>
 
-              {/* In-Line Expiration, CVC, and ZIP Grid */}
               <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-1.5">
                   <label htmlFor="expiry" className="text-xs font-bold text-muted uppercase tracking-wider">
@@ -443,23 +634,21 @@ function CheckoutContent() {
               </div>
             </div>
 
-            {/* Sandbox Guarantee Badge */}
             <div className="flex items-center gap-2.5 p-3.5 rounded-card bg-surface-muted border border-line text-xs text-muted font-medium">
               <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
               <span>Sandbox payment mode active · Safe test transaction with zero charge.</span>
             </div>
 
-            {/* Submit Button */}
             <button
               type="submit"
               disabled={isProcessing}
               className="w-full py-3.5 rounded-control bg-ink hover:opacity-90 text-white font-bold text-sm tracking-wide transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
               {isProcessing ? (
-                <span>Authorizing hold…</span>
+                <span>Verifying &amp; charging…</span>
               ) : (
                 <>
-                  <span>Pay ${reservation?.totalPrice.toFixed(2)} & Confirm Booking</span>
+                  <span>Pay ${reservation.totalPrice.toFixed(2)} &amp; Confirm Booking</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}
@@ -469,41 +658,50 @@ function CheckoutContent() {
 
         {/* Right Column: Sticky Summary & Price Breakdown (5 Cols) */}
         <aside className="lg:col-span-5 bg-surface border border-line rounded-card p-6 space-y-6 sticky top-6 shadow-sm">
-          {/* Neutral Photo Placeholder */}
-          <div className="h-44 w-full rounded-card border border-line bg-surface-muted flex flex-col items-center justify-center text-muted gap-2">
-            <ImageOff className="w-6 h-6 stroke-1" />
-            <span className="text-xs font-medium">Photo preview unavailable</span>
-          </div>
+          {reservation.imageUrl ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={reservation.imageUrl}
+              alt={reservation.hotelName}
+              className="h-44 w-full rounded-card border border-line object-cover"
+            />
+          ) : (
+            <div className="h-44 w-full rounded-card border border-line bg-surface-muted flex flex-col items-center justify-center text-muted gap-2">
+              <ImageOff className="w-6 h-6 stroke-1" />
+              <span className="text-xs font-medium">Photo preview unavailable</span>
+            </div>
+          )}
 
           <div className="space-y-1">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-muted">
               <Sparkles className="w-3.5 h-3.5 text-amber-500" />
               <span>Boutique Stay</span>
             </div>
-            <h2 className="text-lg font-bold text-ink">{reservation?.hotelName}</h2>
-            <p className="text-xs text-muted">{reservation?.roomTitle}</p>
+            <h2 className="text-lg font-bold text-ink">{reservation.hotelName}</h2>
+            <p className="text-xs text-muted capitalize">{reservation.roomTitle}</p>
           </div>
 
-          {/* Stay Dates Box */}
           <div className="grid grid-cols-2 gap-3 p-3 rounded-control bg-canvas border border-line text-xs">
             <div>
               <span className="text-muted block text-[10px] uppercase font-bold tracking-wider">Check-in</span>
-              <span className="font-semibold text-ink">{reservation?.checkIn}</span>
+              <span className="font-semibold text-ink">{reservation.checkIn}</span>
             </div>
             <div>
               <span className="text-muted block text-[10px] uppercase font-bold tracking-wider">Check-out</span>
-              <span className="font-semibold text-ink">{reservation?.checkOut}</span>
+              <span className="font-semibold text-ink">{reservation.checkOut}</span>
             </div>
           </div>
 
-          {/* Itemized Price Breakdown */}
           <div className="pt-2">
             <PriceBreakdown
-              nightlyRate={reservation?.nightlyRate || 0}
-              nights={reservation?.nights || 1}
-              taxes={[{ label: 'Taxes & estimated fees', amount: reservation?.taxes || 0 }]}
-              total={reservation?.totalPrice || 0}
+              nightlyRate={reservation.nightlyRate}
+              nights={reservation.nights}
+              total={reservation.totalPrice}
             />
+          </div>
+
+          <div className="pt-2 border-t border-line">
+            <CancellationPolicy checkIn={reservation.checkIn} total={reservation.totalPrice} />
           </div>
         </aside>
       </div>
@@ -511,11 +709,34 @@ function CheckoutContent() {
   );
 }
 
+function CheckoutRouter() {
+  const searchParams = useSearchParams();
+  const reservationId = searchParams.get('reservationId') || '';
+
+  if (!reservationId) {
+    return (
+      <main className="max-w-xl mx-auto px-4 py-16 text-center space-y-4">
+        <p role="alert" className="rounded-control bg-danger-soft border border-danger/20 p-4 text-sm text-danger">
+          Missing reservation ID. Please select a room first.
+        </p>
+        <Link
+          href="/hotels"
+          className="inline-flex items-center gap-2 bg-ink text-white font-bold text-sm px-5 py-2.5 rounded-control"
+        >
+          Browse hotels
+        </Link>
+      </main>
+    );
+  }
+
+  return <CheckoutContent key={reservationId} reservationId={reservationId} />;
+}
+
 export default function CheckoutPage() {
   return (
     <RequireAuth>
       <Suspense fallback={<div className="p-12 text-center text-muted">Loading checkout…</div>}>
-        <CheckoutContent />
+        <CheckoutRouter />
       </Suspense>
     </RequireAuth>
   );
