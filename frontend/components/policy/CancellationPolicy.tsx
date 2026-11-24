@@ -58,7 +58,7 @@ export default function CancellationPolicy({
       id: "half",
       icon: CircleAlert,
       title: `50% fee${fee(50)}`,
-      when: start ? `${fmtDate(start - 7 * DAY)} – ${fmtDate(start - 2 * DAY)}` : "Within 7 days of check-in",
+      when: start ? `${fmtDate(start - 7 * DAY)} – ${fmtDate(start - 3 * DAY)}` : "Within 7 days of check-in",
       tone: "text-accent",
     },
     {
