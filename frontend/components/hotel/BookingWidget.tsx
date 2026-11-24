@@ -1,8 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import StayConflictNotice, {
+  getStayConflict,
+  type StayConflict,
+} from "@/components/booking/StayConflictNotice";
 import { Button } from "@/components/ui/Button";
 import { authFetch, getAccessToken, getRefreshToken } from "@/lib/auth";
 
@@ -26,11 +29,6 @@ interface BookingWidgetProps {
   onGuestsChange: (adults: number, children: number) => void;
 }
 
-type ConflictError = {
-  message: string;
-  isOverlap: boolean;
-};
-
 const todayIso = () => new Date().toLocaleDateString("en-CA");
 
 export default function BookingWidget({
@@ -46,9 +44,9 @@ export default function BookingWidget({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<ConflictError | null>(null);
+  const [error, setError] = useState("");
+  const [conflict, setConflict] = useState<StayConflict | null>(null);
 
   const totalGuests = adults + childrenCount;
   const maxGuests = room?.max_guests ?? 10;
@@ -62,32 +60,30 @@ export default function BookingWidget({
             (1000 * 60 * 60 * 24)
         )
       : 0;
-
-  const subtotal = Math.round(basePrice * 100) * nights / 100;
+  const subtotal = (Math.round(basePrice * 100) * nights) / 100;
 
   const handleBooking = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
+    setError("");
+    setConflict(null);
 
     if (!room || !room.available) {
-      setError({ message: "Please select an available room first.", isOverlap: false });
+      setError("Please select an available room first.");
       return;
     }
     if (!checkIn || !checkOut || checkOut <= checkIn) {
-      setError({ message: "Check-out date must be after check-in date.", isOverlap: false });
+      setError("Check-out date must be after check-in date.");
       return;
     }
     if (totalGuests > room.max_guests) {
-      setError({
-        message: `This room accommodates up to ${room.max_guests} guest${room.max_guests === 1 ? "" : "s"}.`,
-        isOverlap: false,
-      });
+      setError(
+        `This room accommodates up to ${room.max_guests} guest${room.max_guests === 1 ? "" : "s"}.`
+      );
       return;
     }
 
     const query = searchParams.toString();
     const returnUrl = query ? `${pathname}?${query}` : pathname;
-
     if (!getAccessToken() && !getRefreshToken()) {
       router.push(`/login?next=${encodeURIComponent(returnUrl)}`);
       return;
@@ -113,31 +109,28 @@ export default function BookingWidget({
 
       const data = await res.json().catch(() => null);
       if (!res.ok) {
+        const parsedConflict = getStayConflict(data);
+        if (parsedConflict) {
+          setConflict(parsedConflict);
+          return;
+        }
+
         const detail = data?.detail;
-        if (Array.isArray(detail) && detail[0]) {
-          setError({
-            message: detail[0].msg || "Unable to reserve this room.",
-            isOverlap: detail[0].type === "overlapping_stay",
-          });
+        if (Array.isArray(detail) && detail[0]?.msg) {
+          setError(detail[0].msg);
         } else if (typeof detail === "string") {
-          setError({ message: detail, isOverlap: false });
+          setError(detail);
         } else if (detail && typeof detail.message === "string") {
-          setError({ message: detail.message, isOverlap: false });
+          setError(detail.message);
         } else {
-          setError({
-            message: "Selected room is unavailable for these dates.",
-            isOverlap: false,
-          });
+          setError("Selected room is unavailable for these dates.");
         }
         return;
       }
 
       router.push(`/checkout?reservationId=${encodeURIComponent(data.id)}`);
     } catch {
-      setError({
-        message: "Can't reach the server right now. Please try again.",
-        isOverlap: false,
-      });
+      setError("Can't reach the server right now. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -164,20 +157,14 @@ export default function BookingWidget({
         </div>
       </div>
 
+      {conflict && <StayConflictNotice conflict={conflict} />}
+
       {error && (
         <div
           role="alert"
-          className="p-3 text-sm text-danger bg-danger-soft border border-danger/20 rounded-control space-y-2"
+          className="p-3 text-sm text-danger bg-danger-soft border border-danger/20 rounded-control"
         >
-          <p>{error.message}</p>
-          {error.isOverlap && (
-            <Link
-              href="/bookings"
-              className="inline-block font-semibold underline hover:opacity-80"
-            >
-              View or manage your conflicting booking →
-            </Link>
-          )}
+          <p>{error}</p>
         </div>
       )}
 
