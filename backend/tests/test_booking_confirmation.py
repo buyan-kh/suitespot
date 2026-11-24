@@ -18,7 +18,8 @@ from app.services.booking_confirmation import (
 )
 
 TODAY = datetime.now(timezone.utc).date()
-IN, OUT = TODAY + timedelta(days=10), TODAY + timedelta(days=13)  # 3 nights x 100 = 300
+IN, OUT = TODAY + timedelta(days=10), TODAY + timedelta(days=13)  # 3 nights x 100, full total = 464.80
+_TOTAL = Decimal("464.80")
 
 
 @pytest.fixture
@@ -45,7 +46,7 @@ def hold(db_session, user, room):
     return place_hold(db_session, user_id=user.id, room_id=room.id, check_in=IN, check_out=OUT)
 
 
-def pay(db, reservation, amount=300, txn="txn_1", method="card"):
+def pay(db, reservation, amount=_TOTAL, txn="txn_1", method="card"):
     return confirm_booking(
         db, reservation_id=reservation.id, amount=amount,
         payment_method=method, transaction_id=txn,
@@ -76,7 +77,7 @@ def test_payment_is_recorded(db_session, hold):
     assert p.transaction_id == "txn_abc"
     assert p.status == "succeeded"
     assert p.payment_method == "card"
-    assert float(p.amount) == 300.0
+    assert Decimal(str(p.amount)) == _TOTAL
     assert p.paid_at is not None
 
 
@@ -96,7 +97,7 @@ def test_same_charge_reported_twice_pays_once(db_session, hold):
 
 def test_existing_pending_payment_row_is_updated_not_duplicated(db_session, hold):
     """The charge endpoint (3.1.2) may create a pending Payment when it starts the charge."""
-    db_session.add(Payment(reservation_id=hold.id, amount=300, payment_method="card",
+    db_session.add(Payment(reservation_id=hold.id, amount=_TOTAL, payment_method="card",
                            transaction_id="txn_1", status="pending"))
     db_session.commit()
     pay(db_session, hold, txn="txn_1")
@@ -104,16 +105,16 @@ def test_existing_pending_payment_row_is_updated_not_duplicated(db_session, hold
     assert p.status == "succeeded" and p.paid_at is not None
 
 
-@pytest.mark.parametrize("amount", [299.99, 300.01, 0, 150, 3000])
+@pytest.mark.parametrize("amount", [300.00, 464.81, 0, 150, 3000])
 def test_wrong_amount_is_refused_and_nothing_changes(db_session, hold, amount):
     with pytest.raises(AmountMismatch) as error:
         pay(db_session, hold, amount=amount)
-    assert error.value.expected == Decimal("300.00")
+    assert error.value.expected == _TOTAL
     assert status_of(db_session, hold) == "pending"
     assert payments(db_session) == []
 
 
-@pytest.mark.parametrize("amount", [300, 300.0, "300", "300.00", Decimal("300.0")])
+@pytest.mark.parametrize("amount", [464.80, "464.80", "464.800", Decimal("464.80")])
 def test_amount_formats_that_equal_the_total_are_accepted(db_session, hold, amount):
     assert pay(db_session, hold, amount=amount).reservation.status == "confirmed"
 
@@ -149,7 +150,7 @@ def test_charge_id_from_another_reservation_is_refused(db_session, user, room, h
     )
     pay(db_session, hold, txn="txn_1")
     with pytest.raises(DuplicatePayment):
-        pay(db_session, other, amount=200, txn="txn_1")
+        pay(db_session, other, amount=_TOTAL, txn="txn_1")
     assert status_of(db_session, other) == "pending"
 
 

@@ -20,7 +20,8 @@ from app.services.payment_failure import (
 )
 
 TODAY = datetime.now(timezone.utc).date()
-IN, OUT = TODAY + timedelta(days=10), TODAY + timedelta(days=13)  # 3 nights x 100 = 300
+IN, OUT = TODAY + timedelta(days=10), TODAY + timedelta(days=13)  # 3 nights x 100, full total = 464.80
+_TOTAL = 464.80  # subtotal 300 + fees + 12% tax
 
 
 def make_user(db, email):
@@ -56,7 +57,7 @@ def hold(db_session, user, room):
     return place_hold(db_session, user_id=user.id, room_id=room.id, check_in=IN, check_out=OUT)
 
 
-def fail(db, reservation, txn="txn_1", amount=300):
+def fail(db, reservation, txn="txn_1", amount=_TOTAL):
     db.expire_all()  # each provider callback runs in a fresh session
     return record_failed_payment(
         db, reservation_id=reservation.id, amount=amount,
@@ -64,7 +65,7 @@ def fail(db, reservation, txn="txn_1", amount=300):
     )
 
 
-def pay(db, reservation, txn="txn_ok", amount=300):
+def pay(db, reservation, txn="txn_ok", amount=_TOTAL):
     db.expire_all()
     return confirm_booking(
         db, reservation_id=reservation.id, amount=amount,
@@ -174,7 +175,7 @@ def test_a_failure_after_the_same_charge_succeeded_changes_nothing(db_session, h
 
 
 def test_an_existing_pending_payment_row_is_updated_not_duplicated(db_session, hold):
-    db_session.add(Payment(reservation_id=hold.id, amount=300, payment_method="card",
+    db_session.add(Payment(reservation_id=hold.id, amount=_TOTAL, payment_method="card",
                            transaction_id="txn_1", status="pending"))
     db_session.commit()
 
@@ -215,7 +216,7 @@ def test_failure_on_a_closed_reservation_is_kept_but_changes_nothing(db_session,
 def test_a_charge_id_from_another_reservation_is_refused(db_session, hold, other, room):
     theirs = place_hold(db_session, user_id=other.id, room_id=room.id,
                         check_in=OUT, check_out=OUT + timedelta(days=1))
-    fail(db_session, theirs, txn="txn_1", amount=100)
+    fail(db_session, theirs, txn="txn_1", amount=_TOTAL)
 
     with pytest.raises(DuplicatePayment):
         fail(db_session, hold, txn="txn_1")
@@ -231,7 +232,7 @@ def test_transaction_id_is_required(db_session, hold, txn):
 
 def test_unknown_reservation(db_session):
     with pytest.raises(ReservationNotFound):
-        record_failed_payment(db_session, reservation_id="nope", amount=300,
+        record_failed_payment(db_session, reservation_id="nope", amount=_TOTAL,
                               payment_method="card", transaction_id="txn_1")
     with pytest.raises(ReservationNotFound):
         retry_status(db_session, reservation_id="nope")
@@ -290,10 +291,10 @@ def test_retry_is_not_allowed_on_a_cancelled_booking(db_session, hold):
 
 # 11. Money is stored to the cent.
 
-@pytest.mark.parametrize("amount", [300, "300", 300.0, "300.004"])
+@pytest.mark.parametrize("amount", [464.80, "464.80", "464.804"])
 def test_amount_is_stored_to_the_cent(db_session, hold, amount):
     result = fail(db_session, hold, amount=amount)
-    assert Decimal(str(result.payment.amount)) == Decimal("300.00")
+    assert Decimal(str(result.payment.amount)) == Decimal("464.80")
 
 
 # 12. Two copies of one failure racing.

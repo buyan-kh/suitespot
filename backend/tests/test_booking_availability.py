@@ -59,7 +59,7 @@ def hold(db, user, room, **kw):
 def test_hold_is_created_pending_with_correct_price(db_session, user, room):
     h = hold(db_session, user, room)
     assert h.status == "pending"
-    assert float(h.total_price) == 300.0  # 3 nights x 100
+    assert float(h.total_price) == 464.80  # 3 nights x 100 with fees + 12% tax
     assert h.check_in_date == IN and h.check_out_date == OUT
 
 
